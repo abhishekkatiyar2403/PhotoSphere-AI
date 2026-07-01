@@ -36,3 +36,28 @@ export const authApi = {
   logout: () => apiFetch("/api/auth/logout", { method: "POST" }),
   me: () => apiFetch("/api/auth/me", { method: "GET" }),
 };
+
+// Bare-bones upload/poll/preview round-trip only - deliberately unstyled per
+// specs/upload-pipeline.md (the polished upload UI is Week 7-8 scope).
+async function uploadFile(file: File) {
+  const res = await fetch(`${API_BASE_URL}/api/photos/upload`, {
+    method: "POST",
+    credentials: "include",
+    body: (() => {
+      const form = new FormData();
+      form.append("file", file);
+      return form;
+    })(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError(body?.error ?? "Upload failed", res.status);
+  }
+  return body as { photoId: string; jobId: string; status: string };
+}
+
+export const photosApi = {
+  upload: uploadFile,
+  status: (photoId: string) => apiFetch(`/api/photos/${photoId}/status`, { method: "GET" }),
+  get: (photoId: string) => apiFetch(`/api/photos/${photoId}`, { method: "GET" }),
+};

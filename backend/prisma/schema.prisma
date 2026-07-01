@@ -24,6 +24,7 @@ model User {
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   sessions Session[]
+  photos   Photo[]
 
   @@map("users")
 }
@@ -40,4 +41,71 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+// Roadmap §6 `photos` table (image-relevant subset only, per
+// specs/upload-pipeline.md Non-goals — collection_id/folder_id present but
+// nullable/unused this pass, no Collections CRUD yet).
+model Photo {
+  id       String @id @default(uuid())
+  ownerId  String @map("owner_id")
+
+  // Original file location in MinIO (private bucket, never a public URL).
+  s3Key         String @map("s3_key")
+  s3ThumbnailKey String? @map("s3_thumbnail_key") // points at the 400px "default" thumbnail once generated (spec Open Question 2)
+  originalFilename String @map("original_filename")
+  mimeType      String @map("mime_type")
+  sizeBytes     Int    @map("size_bytes")
+
+  // Populated by the worker's EXIF step (exifr) - null (not an error) when
+  // the source image carries no EXIF data.
+  exifTakenAt      DateTime? @map("exif_taken_at")
+  exifGpsLat       Float?    @map("exif_gps_lat")
+  exifGpsLng       Float?    @map("exif_gps_lng")
+  exifCameraMake   String?   @map("exif_camera_make")
+  exifCameraModel  String?   @map("exif_camera_model")
+
+  // pHash dedup gate (worker step 3, per-user scope per spec Open Question 7).
+  phash             String?  @map("phash")
+  duplicateOfPhotoId String? @map("duplicate_of_photo_id")
+
+  // Mocked classification result (worker step 4) - swappable interface,
+  // never a real Vision API call this pass (see lib/classification).
+  aiLabels     String[] @map("ai_labels")
+  aiConfidence Float?   @map("ai_confidence")
+
+  // Collections/folders CRUD is out of scope this pass - columns exist per
+  // roadmap §6 but stay null/unused until that spec lands.
+  collectionId String? @map("collection_id")
+  folderId     String? @map("folder_id")
+
+  aiClassificationStatus String @default("pending") @map("ai_classification_status") // pending|processing|done|duplicate|failed
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  owner User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  jobs  ProcessingJob[]
+
+  @@index([ownerId])
+  @@index([ownerId, aiClassificationStatus])
+  @@map("photos")
+}
+
+// Roadmap §6 `processing_jobs` table - one row per enqueued pipeline job,
+// giving visibility into worker outcomes without grepping logs.
+model ProcessingJob {
+  id           String   @id @default(uuid())
+  photoId      String   @map("photo_id")
+  jobType      String   @default("pipeline") @map("job_type")
+  status       String   @default("queued") @map("status") // queued|active|completed|failed
+  attempts     Int      @default(0) @map("attempts")
+  errorMessage String?  @map("error_message")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  photo Photo @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@index([photoId])
+  @@map("processing_jobs")
 }

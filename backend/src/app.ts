@@ -2,6 +2,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import authRouter from "./routes/auth";
+import photosRouter from "./routes/photos";
 
 export function createApp() {
   const app = express();
@@ -21,6 +22,7 @@ export function createApp() {
   });
 
   app.use("/api/auth", authRouter);
+  app.use("/api/photos", photosRouter);
 
   // Global error handler - catches anything forwarded via next(err),
   // including async route rejections (see lib/asyncHandler.ts), so a

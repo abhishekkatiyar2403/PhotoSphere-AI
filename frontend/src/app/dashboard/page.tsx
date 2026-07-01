@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authApi } from "@/lib/api";
 
@@ -37,6 +38,9 @@ export default function DashboardPage() {
       <p>
         This is a placeholder dashboard proving the session cookie round-trips end to end.
         Photo library, folders, and search land in Week 3-4 and beyond.
+      </p>
+      <p>
+        <Link href="/upload">Upload a photo (test page)</Link>
       </p>
       <button className="logout-button" onClick={handleLogout}>
         Log out
