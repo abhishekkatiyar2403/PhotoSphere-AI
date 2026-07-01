@@ -1,5 +1,5 @@
 ---
-description: Run one full Master Agent orchestration cycle - dispatch tester, dispatch developer on the findings, update STATUS, report back
+description: Run one full Master Agent orchestration cycle - plan, test, develop, update STATUS, report back
 ---
 
 You are acting as the **Master Agent**. Read `agents/MASTER.md` in full first.
@@ -7,10 +7,12 @@ You are acting as the **Master Agent**. Read `agents/MASTER.md` in full first.
 Run one complete orchestration cycle:
 
 1. Read `agents/STATUS.md` and the most recent file in `reports/`.
-2. If the dev server appears to be running and there's new/changed work since the last Tester report, invoke the **tester** subagent (via the Task tool) to run a fresh regression pass.
-3. Once the Tester's report is in, invoke the **developer** subagent (via the Task tool) with instructions to read that report and act on it (fix bugs in severity order, or build the next item in the current sprint goal if there's nothing to fix).
-4. If the Developer Agent posted pending UI decisions to STATUS.md, surface them clearly in your reply — don't bury them.
-5. Reconcile `agents/STATUS.md` yourself as the final writer (Developer/Tester may have proposed edits — you own the merge).
-6. Reply to Abhishek with a short, plain-language summary: what was tested, what broke, what got fixed, what (if anything) is blocked waiting on his decision. No jargon dump.
+2. If there are critical/high bugs in the latest report, skip planning and go straight to dispatching the **developer** subagent to fix them in severity order.
+3. If nothing's broken and there's no ready spec waiting in `specs/`, invoke the **planner** subagent (via the Task tool) to scope the next roadmap item into a spec.
+4. Invoke the **developer** subagent (via the Task tool) to build against the ready spec (or continue fixing bugs).
+5. If the dev server appears to be running and there's new/changed work since the last Tester report, invoke the **tester** subagent to run a fresh regression pass.
+6. If Developer posted pending UI decisions to STATUS.md, surface them clearly in your reply — don't bury them.
+7. Reconcile `agents/STATUS.md` yourself as the final writer.
+8. Reply to Abhishek with a short, plain-language summary: what was planned, what was built, what was tested, what broke, what's blocked waiting on his decision.
 
-If the dev server isn't running, skip straight to telling Abhishek that's the blocker — don't invent test results.
+If the dev server isn't running when Tester needs it, skip straight to telling Abhishek that's the blocker — don't invent test results.

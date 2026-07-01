@@ -1,6 +1,6 @@
 # PhotoSphere AI — Claude Code Project Instructions
 
-This project uses a **three-role agent system**: Master, Developer, Tester, coordinated entirely through the markdown files in `agents/` and the dated reports in `reports/`. Read this file first in every session.
+This project uses a **four-role agent system**: Master, Planner, Developer, Tester, coordinated entirely through the markdown files in `agents/`, the specs in `specs/`, and the dated reports in `reports/`. Read this file first in every session.
 
 ## Spec of record
 - `PhotoSphere_AI_Project_Instruction.md` — product summary, tech stack, architectural rules
@@ -11,19 +11,24 @@ Simplified local-first MVP slice (Phase 1, Week 1–2 in progress): Next.js 14 +
 
 ## Default behavior when you (Claude) open this project
 
-You are the **Master Agent** by default — see `agents/MASTER.md` for the full role. In short: you don't write code or tests directly, you dispatch the `developer` and `tester` subagents (defined in `.claude/agents/`) and coordinate through `agents/STATUS.md`.
+You are the **Master Agent** by default — see `agents/MASTER.md` for the full role. In short: you don't write specs, code, or tests directly, you dispatch the `planner`, `developer`, and `tester` subagents (defined in `.claude/agents/`) and coordinate through `agents/STATUS.md`.
 
-- Run `/orchestrate` for a full cycle (test → fix → report).
-- Run `/run-tester` or `/run-developer` to invoke either agent directly.
+- Run `/orchestrate` for a full cycle (plan → build → test → report).
+- Run `/run-planner`, `/run-tester`, or `/run-developer` to invoke any single agent directly.
 - Always read `agents/STATUS.md` and the newest file in `reports/` before doing anything — that's the shared memory across sessions.
 
 ## Coordination protocol (the whole point of this setup)
 
-1. Tester Agent writes a dated report to `reports/<date>_<time>.md`.
-2. Developer Agent reads the newest unread report, fixes bugs in severity order, builds the next sprint item if nothing's broken.
-3. Before building any new UI, Developer Agent must present 2–3 approaches with pros/cons and SVG wireframes, and post the choice as a pending decision in `agents/STATUS.md` — implementation waits for Abhishek's pick.
-4. Master Agent reconciles `agents/STATUS.md` and reports to Abhishek in plain language.
-5. This repeats on a schedule (06:00 and 18:00, via `scripts/run-tester-cron.sh` + `scripts/run-developer-cron.sh` — see `EXECUTION_PLAN.md`) and on demand via `/orchestrate`.
+1. Planner Agent turns the next roadmap item into a spec in `specs/<feature-name>.md` — skipped whenever there are bugs to fix instead.
+2. Tester Agent writes a dated report to `reports/<date>_<time>.md`.
+3. Developer Agent reads the newest unread report first (bugs win), otherwise builds against the ready spec in `specs/`.
+4. Before building any new UI, Developer Agent presents 2–3 approaches with pros/cons and SVG wireframes in chat, posts the choice as a pending decision in `agents/STATUS.md`, and waits for Abhishek's pick. Once picked, it tries to turn that SVG into a real Figma frame via the Figma connector (if authorized here — see `PLUGIN_INTEGRATION.md`); if not available, the chosen SVG itself becomes the design record in `design/wireframes/`.
+5. Master Agent reconciles `agents/STATUS.md` and reports to Abhishek in plain language.
+6. This repeats on a schedule (06:00 and 18:00, via `scripts/run-tester-cron.sh` + `scripts/run-developer-cron.sh` — see `EXECUTION_PLAN.md`) and on demand via `/orchestrate`.
+
+## Plugins and skills
+
+Several plugins (design, product-management, engineering, data) are connected in Cowork but aren't automatically wired into this VS Code/Claude Code project — MCP connectors and skills need to be added here separately, and most still need OAuth authorization. See `PLUGIN_INTEGRATION.md` for the full mapping of what's used where, and what falls back to plain markdown until connected.
 
 ## Ground rules for every agent
 
