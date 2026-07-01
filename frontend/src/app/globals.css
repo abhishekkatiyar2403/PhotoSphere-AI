@@ -23,6 +23,36 @@ body {
 .auth-page {
   min-height: 100vh;
   display: flex;
+  flex-direction: row;
+}
+
+.auth-brand-panel {
+  flex: 0 0 40%;
+  max-width: 420px;
+  background: var(--color-primary);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 48px 40px;
+}
+
+.auth-brand-name {
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.auth-brand-tagline {
+  margin-top: 12px;
+  font-size: 14px;
+  color: #dbe4ff;
+  max-width: 280px;
+  line-height: 1.5;
+}
+
+.auth-form-panel {
+  flex: 1 1 auto;
+  display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
@@ -36,6 +66,37 @@ body {
   width: 100%;
   max-width: 380px;
   box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06);
+}
+
+/* Option B is explicitly flagged as needing a mobile breakpoint that the
+   previous centered-card layout didn't need: below 720px, collapse the
+   branded panel down to a compact header bar stacked above the form
+   instead of splitting the viewport in half. */
+@media (max-width: 720px) {
+  .auth-page {
+    flex-direction: column;
+  }
+
+  .auth-brand-panel {
+    flex: 0 0 auto;
+    max-width: none;
+    padding: 24px;
+    align-items: flex-start;
+    justify-content: center;
+  }
+
+  .auth-brand-tagline {
+    display: none;
+  }
+
+  .auth-brand-name {
+    font-size: 18px;
+  }
+
+  .auth-form-panel {
+    flex: 1 1 auto;
+    padding: 24px;
+  }
 }
 
 .auth-card h1 {

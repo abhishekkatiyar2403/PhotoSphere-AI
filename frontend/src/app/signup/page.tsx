@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ApiError, authApi } from "@/lib/api";
+import { AuthLayout } from "@/components/AuthLayout";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -37,7 +38,7 @@ export default function SignupPage() {
   }
 
   return (
-    <main className="auth-page">
+    <AuthLayout>
       <div className="auth-card">
         <h1>Create your account</h1>
         <p className="subtitle">Start organizing your photos with PhotoSphere AI.</p>
@@ -88,6 +89,6 @@ export default function SignupPage() {
           Already have an account? <Link href="/login">Log in</Link>
         </p>
       </div>
-    </main>
+    </AuthLayout>
   );
 }
