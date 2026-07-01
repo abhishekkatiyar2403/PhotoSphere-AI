@@ -8,3 +8,4 @@ build/
 logs/*.log
 .DS_Store
 reports/screenshots/
+*.tsbuildinfo

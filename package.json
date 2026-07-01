@@ -1,0 +1,15 @@
+{
+  "name": "photosphere-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PhotoSphere AI monorepo - local-first MVP (frontend + backend)",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev -w backend",
+    "dev:frontend": "npm run dev -w frontend",
+    "test:backend": "npm run test -w backend"
+  }
+}

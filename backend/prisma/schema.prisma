@@ -1,0 +1,43 @@
+// PhotoSphere AI - Prisma schema (auth-relevant tables only for this pass)
+// See specs/auth.md for the schema rationale, especially the `sessions` table
+// which is added here because the roadmap's §6 schema never defines an
+// owner-session table despite the "opaque token in DB" rule being stated in prose.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  passwordHash      String   @map("password_hash")
+  name              String
+  plan              String   @default("free")
+  storageUsedBytes  BigInt   @default(0) @map("storage_used_bytes")
+  storageLimitBytes BigInt   @default(5368709120) @map("storage_limit_bytes")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  sessions Session[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  createdAt DateTime  @default(now()) @map("created_at")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
