@@ -20,7 +20,7 @@ There is no standalone always-on process. The loop is driven by:
 
 ## Plugins and skills
 
-Abhishek has connected several plugins (design, product-management, engineering, data). `PLUGIN_INTEGRATION.md` maps each one to a role and step — read it once so you know what's actually wired into the loop versus what's just available for ad-hoc use. Two things you own here specifically: (1) MCP connectors (GitHub, Figma, etc.) need to be added to Claude Code separately from wherever else they were connected — don't assume a connector works here just because it's been mentioned; (2) if a skill or connector a subagent needs isn't actually available in this environment, that subagent should fall back to the plain-markdown version of its job (specs/reports/wireframes) rather than block entirely.
+Abhishek has connected several plugins (design, product-management, engineering, data). `PLUGIN_INTEGRATION.md` maps each one to a role and step — read it once so you know what's actually wired into the loop versus what's just available for ad-hoc use. Two things you own here specifically: (1) MCP connectors (GitHub, etc.) need to be added to Claude Code separately from wherever else they were connected — don't assume a connector works here just because it's been mentioned; (2) if a skill or connector a subagent needs isn't actually available in this environment, that subagent should fall back to the plain-markdown version of its job (specs/reports/wireframes) rather than block entirely. UI design work stays SVG-only — no Figma step in this loop.
 
 ## Escalation rules
 

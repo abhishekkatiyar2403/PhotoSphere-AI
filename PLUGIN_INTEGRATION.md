@@ -4,7 +4,7 @@ You connected a batch of plugins (design, product-management, engineering, data)
 
 ## Two things that don't carry over automatically
 
-**1. Authorization.** Most of these still need OAuth before any tool call works: Figma, GitHub, Notion, Slack, Linear, Atlassian, Datadog, ClickUp, Monday, Fireflies, Intercom, Pendo, Amplitude, Hex all showed as "needs authentication" when checked. Authorize the ones you actually want, from claude.ai's connector settings (for claude.ai-managed connectors) — do this once per connector.
+**1. Authorization.** Most of these still need OAuth before any tool call works: GitHub, Notion, Slack, Linear, Atlassian, Datadog, ClickUp, Monday, Fireflies, Intercom, Pendo, Amplitude, Hex all showed as "needs authentication" when checked. Authorize the ones you actually want, from claude.ai's connector settings (for claude.ai-managed connectors) — do this once per connector.
 
 **2. Cowork ≠ Claude Code.** You chose VS Code + the Claude Code extension as where this agent loop actually runs day to day. Connectors authorized here, in this Cowork chat, do not automatically become available inside Claude Code in VS Code — that's a separate surface with its own MCP configuration. To use any of these from the agents defined in `.claude/agents/`, you'll need to add the equivalent MCP server inside Claude Code itself (via `claude mcp add <name> ...` or the `/mcp` command in an interactive Claude Code session), and authorize it there too. Skills (the SKILL.md-based ones, bundled in plugins) work the same way — install the same plugin/marketplace in Claude Code (`/plugin marketplace add`, `/plugin install`) so those subagents can actually invoke them.
 
@@ -15,8 +15,7 @@ Every agent role file already says what to do if a plugin/skill it wants isn't t
 | Plugin / skill | Agent | Where it plugs in | Status |
 |---|---|---|---|
 | `product-management:write-spec`, `sprint-planning`, `roadmap-update` | **Planner** | Core toolkit — these are *why* the Planner role exists. Falls back to `specs/TEMPLATE.md` if not installed in Claude Code. | Needs plugin added to Claude Code |
-| `design:figma` (MCP) | **Developer** | Stage 2 of the UI flow: turn the SVG Abhishek picked into a real Figma frame. Correction to an earlier note here: Figma's Dev Mode MCP server (beta) genuinely supports creating/modifying frames, components, variables, and auto-layout — not just reading. Setup is local via the Figma desktop app (Dev Mode → enable MCP server → `claude mcp add --transport http figma http://127.0.0.1:3845/mcp`), separate from the Cowork Figma connector. Full steps in `MCP_SETUP_GUIDE.md`. | Set up locally per `MCP_SETUP_GUIDE.md` |
-| `design:design-handoff`, `design-critique`, `accessibility-review`, `ux-copy`, `design-system` | **Developer** | Once a design is picked (SVG or Figma), run these to produce the engineering spec, critique the options before committing, check contrast/touch targets, and write microcopy (error states, empty states — already in the roadmap's Week 11 checklist). | Needs plugin added to Claude Code |
+| `design:design-critique`, `accessibility-review`, `ux-copy`, `design-system` | **Developer** | Once an SVG option is picked, run these to critique it before committing, check contrast/touch targets, and write microcopy (error states, empty states — already in the roadmap's Week 11 checklist). UI design stays SVG-only — no Figma step. | Needs plugin added to Claude Code |
 | `engineering:github` (MCP) | **Developer** | Real branch pushes + PRs, replacing the local-only MR drafts in `reports/mr-drafts/`. You chose to stay local-only for now — this is what to flip on later. | Deferred by choice |
 | `engineering:architecture`, `system-design` | **Developer** | Structural decisions (e.g. Prisma schema choices, queue design) — write an ADR instead of just deciding silently. | Needs plugin added to Claude Code |
 | `engineering:testing-strategy` | **Tester** | Design the regression suite structure up front instead of ad hoc Playwright specs. | Needs plugin added to Claude Code |
@@ -38,4 +37,4 @@ Every agent role file already says what to do if a plugin/skill it wants isn't t
 
 ## Recommended next step
 
-Pick 2–3 of the "needs plugin added to Claude Code" rows above — Figma and the Planner skills (write-spec/sprint-planning) are the highest-leverage ones given what you asked for. `MCP_SETUP_GUIDE.md` has the exact commands. Wire those into Claude Code first, run one `/orchestrate` cycle, and see how much it actually changes before wiring in the rest.
+The Planner skills (write-spec/sprint-planning) are the highest-leverage row above given what you asked for. `MCP_SETUP_GUIDE.md` has the exact commands. Wire those into Claude Code first, run one `/orchestrate` cycle, and see how much it actually changes before wiring in the rest.

@@ -22,7 +22,7 @@ You are the **Master Agent** by default — see `agents/MASTER.md` for the full 
 1. Planner Agent turns the next roadmap item into a spec in `specs/<feature-name>.md` — skipped whenever there are bugs to fix instead.
 2. Tester Agent writes a dated report to `reports/<date>_<time>.md`.
 3. Developer Agent reads the newest unread report first (bugs win), otherwise builds against the ready spec in `specs/`.
-4. Before building any new UI, Developer Agent presents 2–3 approaches with pros/cons and SVG wireframes in chat, posts the choice as a pending decision in `agents/STATUS.md`, and waits for Abhishek's pick. Once picked, it tries to turn that SVG into a real Figma frame via the Figma connector (if authorized here — see `PLUGIN_INTEGRATION.md`); if not available, the chosen SVG itself becomes the design record in `design/wireframes/`.
+4. Before building any new UI, Developer Agent presents 2–3 approaches with pros/cons and SVG wireframes in chat, posts the choice as a pending decision in `agents/STATUS.md`, and waits for Abhishek's pick. Once picked, that SVG itself becomes the design record in `design/wireframes/` — no Figma step.
 5. Master Agent reconciles `agents/STATUS.md` and reports to Abhishek in plain language.
 6. This repeats on a schedule (06:00 and 18:00, via `scripts/run-tester-cron.sh` + `scripts/run-developer-cron.sh` — see `EXECUTION_PLAN.md`) and on demand via `/orchestrate`.
 
