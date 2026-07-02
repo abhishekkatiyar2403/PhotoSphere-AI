@@ -13,16 +13,33 @@ const router = Router();
 const BCRYPT_COST_FACTOR = 12; // per roadmap §12
 
 // Brute-force protection on the two auth endpoints (roadmap §12 Layer 7).
-// Keyed by IP; 5 attempts / 15 minutes, matching the acceptance criteria.
-const authRateLimiter = rateLimit({
+// Split into independent per-endpoint buckets per specs/ai-classification.md
+// §8 (carry-over a) - the previous shared signup+login bucket caused
+// cross-endpoint 429 friction in two consecutive Tester runs. Both buckets
+// are effectively disarmed (limit 1000) under NODE_ENV=test so the smoke
+// suite can run back-to-back without 429 flakes; live dev/prod keep the
+// tight production numbers.
+const isTestEnv = process.env.NODE_ENV === "test";
+
+const signupRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 5,
+  limit: isTestEnv ? 1000 : 5,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many attempts. Please try again later." },
 });
 
-router.post("/signup", authRateLimiter, asyncHandler(async (req, res) => {
+// Login legitimately gets retried more than signup; 10/15min is still tight
+// enough for brute-force protection per roadmap §12 Layer 7.
+const loginRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: isTestEnv ? 1000 : 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts. Please try again later." },
+});
+
+router.post("/signup", signupRateLimiter, asyncHandler(async (req, res) => {
   let input;
   try {
     input = signupSchema.parse(req.body);
@@ -57,7 +74,7 @@ router.post("/signup", authRateLimiter, asyncHandler(async (req, res) => {
   });
 }));
 
-router.post("/login", authRateLimiter, asyncHandler(async (req, res) => {
+router.post("/login", loginRateLimiter, asyncHandler(async (req, res) => {
   let input;
   try {
     input = loginSchema.parse(req.body);

@@ -60,3 +60,10 @@ export function hammingDistance(hashA: string, hashB: string): number {
 
 // Roadmap §13 step 3: "hamming distance < 10" threshold for duplicate detection.
 export const DUPLICATE_HAMMING_THRESHOLD = 10;
+
+// What every flat/solid-color image hashes to under this dHash (no
+// left-right pixel differences anywhere in the grid -> all-zero bits),
+// per Tester's 2026-07-02 methodology finding. Near-dup comparisons are
+// SKIPPED whenever either side equals this value (specs/ai-classification.md
+// §5) — flat images only ever dedup via the SHA-256 exact-byte pass.
+export const DEGENERATE_PHASH = "0000000000000000";
