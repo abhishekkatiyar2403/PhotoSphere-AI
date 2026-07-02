@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 import authRouter from "./routes/auth";
 import collectionsRouter from "./routes/collections";
+import dashboardRouter from "./routes/dashboard";
 import foldersRouter from "./routes/folders";
 import photosRouter from "./routes/photos";
 
@@ -27,6 +28,7 @@ export function createApp() {
   app.use("/api/photos", photosRouter);
   app.use("/api/collections", collectionsRouter);
   app.use("/api/folders", foldersRouter);
+  app.use("/api/dashboard", dashboardRouter);
 
   // Global error handler - catches anything forwarded via next(err),
   // including async route rejections (see lib/asyncHandler.ts), so a

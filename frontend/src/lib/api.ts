@@ -56,8 +56,59 @@ async function uploadFile(file: File) {
   return body as { photoId: string; jobId: string; status: string };
 }
 
+// XMLHttpRequest-based upload (specs/dashboard-stats-and-upload-polish.md
+// "Upload flow polish" Open Question 4 default): fetch has no native
+// upload-progress signal, so this is a transport-layer-only swap scoped to
+// this one call site. Same request (POST /api/photos/upload, multipart
+// "file" field, credentials/cookie behavior) and same response contract as
+// uploadFile above - onProgress is purely additive.
+function uploadFileWithProgress(
+  file: File,
+  onProgress?: (fractionComplete: number) => void,
+): Promise<{ photoId: string; jobId: string; status: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE_URL}/api/photos/upload`);
+    // XHR's equivalent of fetch's credentials: "include" - required so the
+    // opaque session cookie round-trips cross-origin, same as apiFetch.
+    xhr.withCredentials = true;
+
+    xhr.upload.onprogress = (event) => {
+      if (!onProgress) return;
+      if (event.lengthComputable) {
+        onProgress(event.loaded / event.total);
+      }
+    };
+
+    xhr.onload = () => {
+      let body: unknown = {};
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        body = {};
+      }
+      const parsed = body as { error?: string; photoId?: string; jobId?: string; status?: string };
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(1);
+        resolve(parsed as { photoId: string; jobId: string; status: string });
+      } else {
+        reject(new ApiError(parsed?.error ?? "Upload failed", xhr.status));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new ApiError("Upload failed", 0));
+    };
+
+    const form = new FormData();
+    form.append("file", file);
+    xhr.send(form);
+  });
+}
+
 export const photosApi = {
   upload: uploadFile,
+  uploadWithProgress: uploadFileWithProgress,
   status: (photoId: string) => apiFetch(`/api/photos/${photoId}/status`, { method: "GET" }),
   get: (photoId: string) => apiFetch(`/api/photos/${photoId}`, { method: "GET" }),
 };
