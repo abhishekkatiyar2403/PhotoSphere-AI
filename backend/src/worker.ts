@@ -19,6 +19,7 @@ import {
   hammingDistance,
 } from "./lib/phash";
 import { prisma } from "./lib/prisma";
+import { serializableTransaction } from "./lib/serializableTransaction";
 import { PhotoProcessingJobData, PHOTO_PROCESSING_QUEUE_NAME } from "./lib/queue";
 import { ensureBucketExists, getPresignedGetUrl, putObject } from "./lib/storage";
 import { thumbnailKey } from "./routes/photos";
@@ -146,7 +147,12 @@ async function assignPhotoToFolder(
   const collection = await findOrCreateDefaultCollection(photo.ownerId);
   const folder = await findOrCreateFolder(collection.id, category);
 
-  await prisma.$transaction(async (tx) => {
+  // Serializable + retry (see lib/serializableTransaction.ts): under plain
+  // Read Committed the previousFolderId read below can be stale by the time
+  // the photo row is written (concurrent manual move / second worker job),
+  // silently drifting photoCount. Serializable makes Postgres abort one of
+  // the conflicting transactions instead, and the helper retries it.
+  await serializableTransaction(async (tx) => {
     // Re-read folderId inside the transaction so a concurrent manual move
     // can't desync the counts.
     const current = await tx.photo.findUnique({
@@ -260,6 +266,22 @@ async function processPhotoPipeline(photoId: string): Promise<void> {
   // Phase 1 - exact pass: same-owner photo with identical SHA-256 (set by
   // the upload handler; pre-existing rows keep null and never match).
   // Zero false-positive risk; catches byte-identical re-uploads.
+  //
+  // Symmetry breaker (review finding, 2026-07-02): fileSha256 is written at
+  // photo-row creation, BEFORE the job runs — so a sibling upload of the
+  // same bytes is visible here while still unprocessed. Without ordering,
+  // two quick uploads of one file mark each other duplicate (A->B, B->A)
+  // and neither ever classifies. Fix: only strictly-OLDER rows (createdAt,
+  // id as tiebreak for identical timestamps) can be the "original", so at
+  // most one direction of the edge can ever exist and cycles are impossible
+  // (duplicate edges always point strictly backwards in time). Candidates
+  // that are themselves duplicates are excluded so the verdict points at
+  // the canonical original, never at another duplicate.
+  // Trade-off (documented in the MR draft): the newer sibling is flagged
+  // duplicate-of the older one even if the older hasn't finished its own
+  // pipeline yet — the older always proceeds to classify, and if it ends up
+  // `failed` the reclassify endpoint remains the escape hatch for the
+  // duplicate-flagged sibling.
   let duplicateOfPhotoId: string | null = null;
   let dedupMethod: string | null = null;
 
@@ -267,9 +289,14 @@ async function processPhotoPipeline(photoId: string): Promise<void> {
     const exactMatch = await prisma.photo.findFirst({
       where: {
         ownerId: photo.ownerId, // per-user scope only (upload-pipeline spec Open Question 7)
-        id: { not: photo.id },
         fileSha256: photo.fileSha256,
+        duplicateOfPhotoId: null, // never point a duplicate at another duplicate
+        OR: [
+          { createdAt: { lt: photo.createdAt } },
+          { createdAt: photo.createdAt, id: { lt: photo.id } },
+        ],
       },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }], // oldest non-duplicate = canonical original
       select: { id: true },
     });
     if (exactMatch) {

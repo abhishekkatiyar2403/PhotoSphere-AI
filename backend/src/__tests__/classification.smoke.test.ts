@@ -5,8 +5,11 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import sharp from "sharp";
 import { createApp } from "../app";
+import { computePHash, DEGENERATE_PHASH } from "../lib/phash";
 import { prisma } from "../lib/prisma";
 import { ensureBucketExists } from "../lib/storage";
+import { reclassifyRateLimiter } from "../middleware/reclassifyRateLimiter";
+import { uploadRateLimiter } from "../middleware/uploadRateLimiter";
 
 // Smoke tests for specs/ai-classification.md: category mapping -> folder
 // auto-creation -> confidence bucketing -> move/reclassify endpoints ->
@@ -40,8 +43,33 @@ function seededNoise(seed: number): Buffer {
 }
 const SECOND_FOOD_SEED = 102;
 
+// Same generator, verified offline: sha256[0] % 7 === 2 (-> ["Document",
+// "Text"] -> Documents) with pairwise dHash distance >= 20 from every
+// committed fixture AND the seed-102 second-food image. Used by the
+// concurrent same-new-category test (exactly one folder row under worker
+// concurrency 2).
+const SECOND_DOCUMENTS_SEED = 200;
+
+async function noiseJpeg(seed: number): Promise<Buffer> {
+  return sharp(seededNoise(seed), {
+    raw: { width: NOISE_SIZE, height: NOISE_SIZE, channels: 3 },
+  })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+}
+
+/** Solid-color JPEG — always hashes to the degenerate all-zeros dHash. */
+async function flatJpeg(r: number, g: number, b: number): Promise<Buffer> {
+  return sharp({
+    create: { width: 64, height: 64, channels: 3, background: { r, g, b } },
+  })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+}
+
 const testEmail = `classification-smoke-${Date.now()}@example.com`;
 const otherEmail = `classification-smoke-other-${Date.now()}@example.com`;
+const limiterEmail = `classification-smoke-limiter-${Date.now()}@example.com`;
 const testPassword = "correct-password-123";
 
 let infraAvailable = true;
@@ -55,6 +83,10 @@ let otherUserId: string;
 let foodPhotoId: string;
 let foodFolderId: string | null = null;
 let collectionId: string | null = null;
+
+// Populated by the multi-category fixtures test; consumed by the parallel
+// reclassify + exif tests below it (declaration order = execution order).
+let naturePhotoId: string | null = null;
 
 const POLL_INTERVAL_MS = 500;
 
@@ -156,7 +188,9 @@ beforeAll(async () => {
 afterAll(async () => {
   if (infraAvailable) {
     // User delete cascades photos, sessions, collections -> folders.
-    await prisma.user.deleteMany({ where: { email: { in: [testEmail, otherEmail] } } });
+    await prisma.user.deleteMany({
+      where: { email: { in: [testEmail, otherEmail, limiterEmail] } },
+    });
     await prisma.$disconnect();
   }
 });
@@ -349,6 +383,198 @@ describe("classification -> mapping -> folder auto-creation (live worker e2e)", 
       data: { aiClassificationStatus: "done" },
     });
   });
+
+  it("multi-category priority: fixture-people lands in People (beats Nature); fixture-nature lands in Nature", async () => {
+    if (skipWorker()) return;
+
+    // fixture-people's label set ["Person", "Outdoor"] spans People AND
+    // Nature — CATEGORY_PRIORITY must resolve it to People (spec AC).
+    const peopleId = await uploadBuffer(
+      fs.readFileSync(fixture("fixture-people.jpg")),
+      "fixture-people.jpg",
+    );
+    const natureId = await uploadBuffer(
+      fs.readFileSync(fixture("fixture-nature.jpg")),
+      "fixture-nature.jpg",
+    );
+
+    const peopleTerminal = await waitForTerminal(peopleId, 30_000);
+    expect(peopleTerminal?.status).toBe("done");
+    expect(peopleTerminal?.aiLabels).toEqual(["Person", "Outdoor"]);
+    expect(peopleTerminal?.folder?.name).toBe("People");
+
+    const natureTerminal = await waitForTerminal(natureId, 30_000);
+    expect(natureTerminal?.status).toBe("done");
+    expect(natureTerminal?.aiLabels).toEqual(["Landscape", "Nature"]);
+    expect(natureTerminal?.folder?.name).toBe("Nature");
+
+    naturePhotoId = natureId; // consumed by the parallel-reclassify + exif tests below
+  }, 60_000);
+
+  it("creates exactly ONE folder row when two concurrent uploads map to the same brand-new category", async () => {
+    if (skipWorker()) return;
+
+    // No earlier test in this file maps anything to Documents, so this is
+    // the brand-new-category race the spec's AC describes: two uploads fired
+    // near-simultaneously, worker concurrency 2, the @@unique constraint +
+    // catch-P2002-and-refetch must yield ONE folder row and zero crashes.
+    const secondDocuments = await noiseJpeg(SECOND_DOCUMENTS_SEED);
+    expect(crypto.createHash("sha256").update(secondDocuments).digest()[0] % 7).toBe(2);
+
+    const [docsId, secondDocsId] = await Promise.all([
+      uploadBuffer(fs.readFileSync(fixture("fixture-documents.jpg")), "fixture-documents.jpg"),
+      uploadBuffer(secondDocuments, "second-documents.jpg"),
+    ]);
+
+    const docsTerminal = await waitForTerminal(docsId, 30_000);
+    const secondDocsTerminal = await waitForTerminal(secondDocsId, 30_000);
+    expect(docsTerminal?.status).toBe("done");
+    expect(secondDocsTerminal?.status).toBe("done");
+    expect(docsTerminal?.folder?.name).toBe("Documents");
+    expect(secondDocsTerminal?.folderId).toBe(docsTerminal?.folderId); // one shared row
+
+    const foldersRes = await request(app)
+      .get(`/api/collections/${collectionId}/folders`)
+      .set("Cookie", sessionCookie);
+    const documentsFolders = foldersRes.body.folders.filter(
+      (f: { name: string }) => f.name === "Documents",
+    );
+    expect(documentsFolders).toHaveLength(1); // exactly one row - unique constraint held
+    expect(documentsFolders[0].photoCount).toBe(2);
+  }, 60_000);
+
+  it("never flags two DIFFERENT flat/solid-color images as duplicates (degenerate pHash guard), but still catches a byte-identical flat re-upload", async () => {
+    if (skipWorker()) return;
+
+    // The exact Tester flat-image repro from reports/2026-07-02_0450.md.
+    const red = await flatJpeg(220, 30, 30);
+    const blue = await flatJpeg(30, 30, 220);
+    expect(red.equals(blue)).toBe(false);
+    // Both hash to the degenerate all-zeros dHash - without the worker's
+    // guard they would pHash-match at distance 0 and false-dedup.
+    expect(await computePHash(red)).toBe(DEGENERATE_PHASH);
+    expect(await computePHash(blue)).toBe(DEGENERATE_PHASH);
+
+    const redId = await uploadBuffer(red, "flat-red.jpg");
+    const redTerminal = await waitForTerminal(redId, 30_000);
+    expect(redTerminal?.status).toBe("done");
+
+    const blueId = await uploadBuffer(blue, "flat-blue.jpg");
+    const blueTerminal = await waitForTerminal(blueId, 30_000);
+    expect(blueTerminal?.status).toBe("done"); // NOT duplicate
+    expect(blueTerminal?.duplicateOfPhotoId).toBeNull();
+
+    // Byte-identical flat re-upload DOES dedup - via the SHA-256 exact pass,
+    // pointing at the strictly-older original (never at the newer sibling).
+    const redAgainId = await uploadBuffer(red, "flat-red-again.jpg");
+    const redAgainTerminal = await waitForTerminal(redAgainId, 30_000);
+    expect(redAgainTerminal?.status).toBe("duplicate");
+    expect(redAgainTerminal?.dedupMethod).toBe("sha256");
+    expect(redAgainTerminal?.duplicateOfPhotoId).toBe(redId);
+  }, 90_000);
+
+  it("caps parallel reclassify requests at one atomic claim each (no double-enqueue, no photoCount drift)", async () => {
+    if (skipWorker()) return;
+    expect(naturePhotoId).not.toBeNull();
+
+    const rowsBefore = await prisma.processingJob.count({
+      where: { photoId: naturePhotoId!, jobType: "reclassify" },
+    });
+
+    // Fire 6 reclassify requests in parallel against a `done` photo. The
+    // atomic claim (conditional UPDATE) means each 202 corresponds to
+    // exactly one terminal->pending transition and exactly one job row.
+    // Deterministic invariants (a later request CAN legitimately win a
+    // second claim if the worker fully completed in between, so we assert
+    // the correctness property, not a hardcoded count):
+    //   1. every response is 202 or 409 - nothing else;
+    //   2. at least one claim succeeds;
+    //   3. new reclassify job rows === number of 202s (finding #5: job-row
+    //      creation is capped at one per claim);
+    //   4. the photo settles back to done/Nature with photoCount intact.
+    const responses = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        request(app).post(`/api/photos/${naturePhotoId}/reclassify`).set("Cookie", sessionCookie),
+      ),
+    );
+    const codes = responses.map((r) => r.status);
+    for (const code of codes) {
+      expect([202, 409]).toContain(code);
+    }
+    const accepted = codes.filter((c) => c === 202).length;
+    expect(accepted).toBeGreaterThanOrEqual(1);
+
+    const rowsAfter = await prisma.processingJob.count({
+      where: { photoId: naturePhotoId!, jobType: "reclassify" },
+    });
+    expect(rowsAfter - rowsBefore).toBe(accepted);
+
+    // Settle: done AND no queued/active job rows left for this photo.
+    const deadline = Date.now() + 30_000;
+    let settled: StatusBody | null = null;
+    while (Date.now() < deadline) {
+      const body = await getStatus(naturePhotoId!);
+      const unfinished = await prisma.processingJob.count({
+        where: { photoId: naturePhotoId!, status: { in: ["queued", "active"] } },
+      });
+      if (body.status === "done" && unfinished === 0) {
+        settled = body;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+    expect(settled).not.toBeNull();
+    expect(settled!.folder?.name).toBe("Nature");
+
+    // Reclassifying back into the SAME folder must not change its count -
+    // this catches both double-enqueue double-increments and the stale
+    // previousFolderId drift (serializable tx fix). Only fixture-nature has
+    // landed in Nature at this point in the file.
+    const natureFolder = await prisma.folder.findFirst({
+      where: { collectionId: collectionId!, name: "Nature" },
+    });
+    expect(natureFolder?.photoCount).toBe(1);
+  }, 60_000);
+
+  it("exposes exif on GET /api/photos/:id - populated for an EXIF-tagged image, all-null for one without", async () => {
+    if (skipWorker()) return;
+    expect(naturePhotoId).not.toBeNull();
+
+    // Null shape: the seeded-noise fixtures carry no EXIF segment.
+    const nullRes = await request(app)
+      .get(`/api/photos/${naturePhotoId}`)
+      .set("Cookie", sessionCookie);
+    expect(nullRes.status).toBe(200);
+    expect(nullRes.body.exif).toEqual({
+      takenAt: null,
+      gpsLat: null,
+      gpsLng: null,
+      cameraMake: null,
+      cameraModel: null,
+    });
+
+    // Populated: sharp-written IFD0 Make/Model survives the worker's exifr
+    // pass. (Flat gray -> degenerate pHash -> can never near-dup-collide
+    // with any other test image; unique bytes -> no sha256 match either.)
+    const exifTagged = await sharp({
+      create: { width: 64, height: 64, channels: 3, background: { r: 128, g: 128, b: 128 } },
+    })
+      .jpeg({ quality: 90 })
+      .withExif({ IFD0: { Make: "PhotoSphereTest", Model: "SmokeCam 3000" } })
+      .toBuffer();
+
+    const photoId = await uploadBuffer(exifTagged, "exif-tagged.jpg");
+    const terminal = await waitForTerminal(photoId, 30_000);
+    expect(terminal?.status).toBe("done");
+
+    const res = await request(app).get(`/api/photos/${photoId}`).set("Cookie", sessionCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.exif.cameraMake).toBe("PhotoSphereTest");
+    expect(res.body.exif.cameraModel).toBe("SmokeCam 3000");
+    expect(res.body.exif.takenAt).toBeNull(); // only Make/Model were written
+    expect(res.body.exif.gpsLat).toBeNull();
+    expect(res.body.exif.gpsLng).toBeNull();
+  }, 60_000);
 });
 
 describe("collections/folders/move API", () => {
@@ -519,6 +745,70 @@ describe("collections/folders/move API", () => {
       .send({ folderId: otherFolder.id });
     expect(crossTarget.status).toBe(404);
   });
+});
+
+describe("reclassify rate-limiter isolation (spec AC: own bucket, never shared)", () => {
+  it("is a distinct limiter instance from the upload limiter (structural)", () => {
+    // express-rate-limit builds one MemoryStore per rateLimit() call, so
+    // distinct middleware instances == distinct buckets. The auth limiters
+    // (signupRateLimiter/loginRateLimiter) are module-private in
+    // routes/auth.ts, separately-constructed and IP-keyed (vs user-keyed
+    // here) - their independence is proven behaviorally below and in the
+    // auth-split test, since NODE_ENV=test disarms their limits (1000/15min)
+    // and makes bucket exhaustion impractical from this suite.
+    expect(reclassifyRateLimiter).not.toBe(uploadRateLimiter);
+    expect(typeof reclassifyRateLimiter).toBe("function");
+    expect(typeof uploadRateLimiter).toBe("function");
+  });
+
+  it("exhausting the reclassify bucket does not throttle uploads or auth calls", async () => {
+    if (skipInfra()) return;
+
+    // Fresh user = fresh per-user buckets; nothing here can 429 the main
+    // test user's remaining reclassify/upload budget.
+    const signup = await request(app)
+      .post("/api/auth/signup")
+      .send({ email: limiterEmail, password: testPassword, name: "Limiter Probe" });
+    expect(signup.status).toBe(201);
+    const cookie = signup.headers["set-cookie"][0];
+
+    // The reclassify limiter is deliberately NOT relaxed under NODE_ENV=test
+    // (30/15min/user) - burn the whole bucket with cheap 404s (the limiter
+    // runs before the handler and counts every response).
+    const missingId = "00000000-0000-0000-0000-000000000000";
+    for (let i = 0; i < 30; i++) {
+      const res = await request(app)
+        .post(`/api/photos/${missingId}/reclassify`)
+        .set("Cookie", cookie);
+      expect(res.status).toBe(404);
+    }
+    const exhausted = await request(app)
+      .post(`/api/photos/${missingId}/reclassify`)
+      .set("Cookie", cookie);
+    expect(exhausted.status).toBe(429);
+
+    // Upload bucket (same user) is unaffected by the exhausted reclassify bucket.
+    const uploadRes = await request(app)
+      .post("/api/photos/upload")
+      .set("Cookie", cookie)
+      .attach("file", fs.readFileSync(fixture("fixture-food.jpg")), {
+        filename: "fixture-food.jpg",
+        contentType: "image/jpeg",
+      });
+    expect(uploadRes.status).toBe(202);
+
+    // Auth bucket is unaffected too.
+    const login = await request(app)
+      .post("/api/auth/login")
+      .send({ email: limiterEmail, password: testPassword });
+    expect(login.status).toBe(200);
+
+    // Let the worker finish this user's upload before afterAll cascades the
+    // user away (avoids a mid-flight job racing test cleanup).
+    if (workerAvailable) {
+      await waitForTerminal(uploadRes.body.photoId as string, 30_000, cookie);
+    }
+  }, 60_000);
 });
 
 describe("auth rate-limit split (carry-over a)", () => {

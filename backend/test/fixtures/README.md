@@ -38,3 +38,22 @@ Usage notes for Tester:
 - Regenerating: the generator lives in the MR notes (seeded noise via Sharp);
   if `MOCK_LABEL_SETS` ever changes length or order, these files and this
   table must be regenerated together.
+
+## In-test generated companion images (not committed as files)
+
+`classification.smoke.test.ts` builds a few more images at runtime with the
+same generators; they are documented here because they share this table's
+determinism contract:
+
+| Generated in-test | Recipe | Mock labels | Expected outcome |
+|---|---|---|---|
+| second-food | seeded noise, seed `102` | `["Food", "Meal"]` | Food (folder-reuse test) |
+| second-documents | seeded noise, seed `200` | `["Document", "Text"]` | Documents (concurrent same-new-category test) |
+| flat red / flat blue | solid 64x64 JPEG, rgb(220,30,30) / rgb(30,30,220) | `["Document", "Text"]` (both: `sha256[0] % 7 == 2`) | both `done`, never pHash-deduped (degenerate-dHash guard); byte-identical re-upload of red → `duplicate` via sha256 |
+| exif-tagged gray | solid 64x64 JPEG rgb(128,128,128) + sharp `withExif` IFD0 Make/Model | `["Landscape", "Nature"]` | Nature; `GET /api/photos/:id` exposes `cameraMake`/`cameraModel` |
+
+All flat/solid images hash to the degenerate all-zeros dHash
+(`DEGENERATE_PHASH`), so they can never pHash-collide with anything — they
+only dedup on exact bytes. Noise seeds were verified offline to have
+`sha256[0] % 7` hitting the named label set and pairwise dHash distance
+>= 20 from every committed fixture (and from each other).

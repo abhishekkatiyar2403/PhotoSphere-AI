@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
 import { sniffMimeType } from "../lib/fileSniff";
 import { prisma } from "../lib/prisma";
+import { serializableTransaction } from "../lib/serializableTransaction";
 import { PhotoProcessingJobData, photoProcessingQueue } from "../lib/queue";
 import { putObject } from "../lib/storage";
 import { getPresignedGetUrl } from "../lib/storage";
@@ -269,7 +270,10 @@ router.patch(
       return res.status(404).json({ error: "Folder not found" });
     }
 
-    await prisma.$transaction(async (tx) => {
+    // Serializable + retry (see lib/serializableTransaction.ts): the
+    // previousFolderId read below is stale-prone under Read Committed when
+    // a worker job assigns this photo concurrently — photoCount would drift.
+    await serializableTransaction(async (tx) => {
       const current = await tx.photo.findUnique({
         where: { id: photo.id },
         select: { folderId: true },
@@ -318,32 +322,73 @@ router.post(
       return res.status(409).json({ error: "Classification already in progress" });
     }
 
-    const job = await prisma.processingJob.create({
-      data: {
-        photoId: photo.id,
-        jobType: "reclassify",
-        status: "queued",
+    // Atomic claim (review finding, 2026-07-02): the guard above is a plain
+    // check-then-act, so N concurrent requests could all pass it and
+    // double-enqueue. This single conditional UPDATE is the real arbiter —
+    // only the request whose UPDATE matches (count === 1) may create a job
+    // row and enqueue; everyone else gets the 409. The status filter (not
+    // the read above) decides, so exactly one claim per terminal->pending
+    // transition is possible.
+    const claimed = await prisma.photo.updateMany({
+      where: {
+        id: photo.id,
+        ownerId: req.user!.id,
+        aiClassificationStatus: { notIn: ["pending", "processing"] },
       },
-    });
-
-    await prisma.photo.update({
-      where: { id: photo.id },
       data: { aiClassificationStatus: "pending" },
     });
+    if (claimed.count !== 1) {
+      return res.status(409).json({ error: "Classification already in progress" });
+    }
 
-    // Same PK-as-BullMQ-id pattern as the upload handler - required by the
-    // worker's by-job-id bookkeeping (specs/ai-classification.md §4).
-    const bullJob = await photoProcessingQueue.add(
-      "reclassify",
-      { photoId: photo.id } satisfies PhotoProcessingJobData,
-      { jobId: job.id },
-    );
+    let job: { id: string } | undefined;
+    try {
+      job = await prisma.processingJob.create({
+        data: {
+          photoId: photo.id,
+          jobType: "reclassify",
+          status: "queued",
+        },
+      });
 
-    return res.status(202).json({
-      photoId: photo.id,
-      jobId: bullJob.id,
-      status: "pending",
-    });
+      // Same PK-as-BullMQ-id pattern as the upload handler - required by the
+      // worker's by-job-id bookkeeping (specs/ai-classification.md §4).
+      const bullJob = await photoProcessingQueue.add(
+        "reclassify",
+        { photoId: photo.id } satisfies PhotoProcessingJobData,
+        { jobId: job.id },
+      );
+
+      return res.status(202).json({
+        photoId: photo.id,
+        jobId: bullJob.id,
+        status: "pending",
+      });
+    } catch (err) {
+      // Compensation (review finding, 2026-07-02): if the Redis enqueue (or
+      // the job-row insert) throws after the claim, the photo would be stuck
+      // 'pending' forever — no job exists to move it on, and every future
+      // reclassify would 409. Release the claim (only if still 'pending' —
+      // nothing else can touch it while we hold the claim, since the job was
+      // never enqueued) and remove the orphan job row, then rethrow so
+      // asyncHandler returns a 500 with consistent state.
+      // Note: photo.aiClassificationStatus is the pre-claim terminal status
+      // read above; a terminal->terminal change between that read and the
+      // claim would require a full worker cycle in between, which the
+      // 'pending' filter here makes harmless anyway (we'd simply not revert).
+      if (job) {
+        await prisma.processingJob
+          .delete({ where: { id: job.id } })
+          .catch(() => undefined); // best-effort - never mask the original error
+      }
+      await prisma.photo
+        .updateMany({
+          where: { id: photo.id, aiClassificationStatus: "pending" },
+          data: { aiClassificationStatus: photo.aiClassificationStatus },
+        })
+        .catch(() => undefined);
+      throw err;
+    }
   }),
 );
 
