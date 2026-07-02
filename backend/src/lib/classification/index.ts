@@ -22,12 +22,19 @@ export interface ClassificationProvider {
   classify(imageBuffer: Buffer): Promise<ClassificationResult>;
 }
 
+// Extended per specs/ai-classification.md §3 so the category-mapping table
+// is exercisable end-to-end: People (multi-category priority vs Nature),
+// Food, Documents, Nature aliases, Animals, Vehicles, and one deliberately
+// unmappable set (-> Uncategorized). One committed image fixture per set
+// lives in backend/test/fixtures/ (see its README for the mapping).
 const MOCK_LABEL_SETS: string[][] = [
-  ["Person", "Outdoor"],
-  ["Food", "Meal"],
-  ["Document", "Text"],
-  ["Landscape", "Nature"],
-  ["Uncategorized"],
+  ["Person", "Outdoor"], // -> People (People > Nature priority)
+  ["Food", "Meal"], // -> Food
+  ["Document", "Text"], // -> Documents
+  ["Landscape", "Nature"], // -> Nature (Open Question 2 aliases)
+  ["Dog", "Animal"], // -> Animals
+  ["Car", "Truck"], // -> Vehicles
+  ["Abstract", "Pattern"], // -> unmappable -> Uncategorized
 ];
 
 // Exposed so tests/Tester can verify the dedup gate actually short-circuits

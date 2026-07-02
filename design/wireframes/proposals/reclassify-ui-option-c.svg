@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- Option C: folder-cards landing + minimal grid, all actions in a photo modal -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Organize</text>
+
+  <!-- Breadcrumb -->
+  <text x="20" y="72" font-size="12" fill="#3057d5">My Photos</text>
+  <text x="86" y="72" font-size="12" fill="#8a90a0">/ Food</text>
+
+  <!-- Left: folder cards (landing state, shown condensed) -->
+  <rect x="20" y="86" width="150" height="70" rx="6" fill="#e8eefc" stroke="#3057d5"/>
+  <text x="32" y="112" font-size="13" fill="#1b3a9e" font-weight="bold">Food</text>
+  <text x="32" y="132" font-size="11" fill="#1b3a9e">12 photos</text>
+
+  <rect x="180" y="86" width="150" height="70" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="192" y="112" font-size="13" fill="#333" font-weight="bold">People</text>
+  <text x="192" y="132" font-size="11" fill="#8a90a0">34 photos</text>
+
+  <rect x="340" y="86" width="150" height="70" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="352" y="112" font-size="13" fill="#333" font-weight="bold">Uncategorized</text>
+  <text x="352" y="132" font-size="11" fill="#8a90a0">7 photos</text>
+
+  <rect x="500" y="86" width="150" height="70" rx="6" fill="#ffffff" stroke="#b9c0cf" stroke-dasharray="4 3"/>
+  <text x="512" y="112" font-size="13" fill="#3057d5">+ New folder</text>
+  <text x="512" y="132" font-size="11" fill="#8a90a0">custom move target</text>
+
+  <!-- Minimal grid (no per-card controls; click opens modal) -->
+  <rect x="20" y="176" width="110" height="110" fill="#d7dbe4"/>
+  <rect x="140" y="176" width="110" height="110" fill="#d7dbe4"/>
+  <rect x="260" y="176" width="110" height="110" fill="#f3e2e2"/>
+  <text x="296" y="236" font-size="10" fill="#b05555">failed</text>
+  <rect x="380" y="176" width="110" height="110" fill="#f1ead6"/>
+  <text x="404" y="236" font-size="10" fill="#9a7d2e">duplicate</text>
+  <rect x="20" y="296" width="110" height="110" fill="#d7dbe4"/>
+  <rect x="140" y="296" width="110" height="110" fill="#d7dbe4"/>
+
+  <!-- Modal overlay -->
+  <rect x="0" y="48" width="800" height="552" fill="#000000" opacity="0.25"/>
+  <rect x="230" y="150" width="360" height="360" rx="8" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="250" y="180" font-size="14" fill="#222" font-weight="bold">IMG_2050.jpg</text>
+  <text x="560" y="180" font-size="14" fill="#8a90a0">✕</text>
+
+  <rect x="250" y="192" width="140" height="140" fill="#f1ead6"/>
+  <text x="278" y="266" font-size="10" fill="#9a7d2e">duplicate</text>
+
+  <text x="404" y="208" font-size="11" fill="#8a90a0">Status:</text>
+  <text x="448" y="208" font-size="11" fill="#9a7d2e">duplicate (sha256)</text>
+  <text x="404" y="228" font-size="11" fill="#8a90a0">Labels: —</text>
+  <text x="404" y="248" font-size="11" fill="#8a90a0">Duplicate of: IMG_2041.jpg</text>
+
+  <rect x="404" y="262" width="166" height="26" rx="4" fill="#9a7d2e"/>
+  <text x="424" y="279" font-size="11" fill="#ffffff">Reclassify (not a dup)</text>
+
+  <!-- Move section in modal -->
+  <line x1="250" y1="348" x2="570" y2="348" stroke="#dde1e8"/>
+  <text x="250" y="368" font-size="12" fill="#222" font-weight="bold">Move to folder</text>
+  <circle cx="258" cy="388" r="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="272" y="392" font-size="11" fill="#333">Food (12)</text>
+  <circle cx="258" cy="410" r="5" fill="#3057d5"/>
+  <text x="272" y="414" font-size="11" fill="#1b3a9e">Vacation 2026 (3)</text>
+  <circle cx="258" cy="432" r="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="272" y="436" font-size="11" fill="#333">Uncategorized (7)</text>
+
+  <rect x="250" y="450" width="180" height="24" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="258" y="466" font-size="11" fill="#a0a6b5">or create a new folder…</text>
+
+  <rect x="470" y="466" width="100" height="28" rx="4" fill="#3057d5"/>
+  <text x="496" y="484" font-size="12" fill="#ffffff">Move</text>
+  <rect x="360" y="466" width="100" height="28" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="384" y="484" font-size="12" fill="#333">Cancel</text>
+
+  <!-- Footnote -->
+  <text x="20" y="560" font-size="10" fill="#8a90a0">Option C — folder cards with counts up top; clean click-through thumbnail grid (no per-card controls);</text>
+  <text x="20" y="574" font-size="10" fill="#8a90a0">ALL actions (move via radio list, create folder, reclassify) live in a single photo modal that also polls status.</text>
+</svg>

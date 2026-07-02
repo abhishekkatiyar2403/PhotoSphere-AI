@@ -77,17 +77,25 @@ describe("auth flow (smoke)", () => {
   it("rejects duplicate signup with 409", async () => {
     if (!dbAvailable) return;
 
-    await request(app)
+    // NOTE: this used to construct `${testEmail}-dup`, i.e.
+    // "smoke-<ts>@example.com-dup" - an INVALID email under zod's email
+    // regex (TLD must be letters-only), so both signups 400'd at validation
+    // and never reached the duplicate check. The suffix belongs in the
+    // local part.
+    const dupEmail = `dup-${testEmail}`;
+
+    const firstRes = await request(app)
       .post("/api/auth/signup")
-      .send({ email: `${testEmail}-dup`, password: testPassword, name: "Dup" });
+      .send({ email: dupEmail, password: testPassword, name: "Dup" });
+    expect(firstRes.status).toBe(201);
 
     const dupRes = await request(app)
       .post("/api/auth/signup")
-      .send({ email: `${testEmail}-dup`, password: testPassword, name: "Dup" });
+      .send({ email: dupEmail, password: testPassword, name: "Dup" });
 
     expect(dupRes.status).toBe(409);
 
-    await prisma.user.deleteMany({ where: { email: `${testEmail}-dup` } });
+    await prisma.user.deleteMany({ where: { email: dupEmail } });
   });
 
   it("rejects invalid signup payload with 400 before touching the DB", async () => {

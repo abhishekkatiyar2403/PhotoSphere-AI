@@ -23,10 +23,51 @@ model User {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  sessions Session[]
-  photos   Photo[]
+  sessions    Session[]
+  photos      Photo[]
+  collections Collection[]
 
   @@map("users")
+}
+
+// Roadmap §6 `collections` table (listing-only subset this pass, per
+// specs/ai-classification.md Non-goals — no user CRUD, no is_public until
+// Week 9-10 guest sharing). One default "My Photos" collection is created
+// lazily by the worker at first folder assignment.
+model Collection {
+  id          String   @id @default(uuid())
+  ownerId     String   @map("owner_id")
+  name        String
+  description String?
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  owner   User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  folders Folder[]
+  photos  Photo[]
+
+  @@unique([ownerId, name]) // race-safe find-or-create of the default collection (spec Open Question 1)
+  @@index([ownerId])
+  @@map("collections")
+}
+
+// Roadmap §6 `folders` table — AI-auto-created (category_type "ai_generated")
+// by the worker's folder-assignment step, or user-created ("custom") via
+// POST /api/collections/:id/folders. Create-only this pass (no rename/merge/delete).
+model Folder {
+  id           String   @id @default(uuid())
+  collectionId String   @map("collection_id")
+  name         String // 'People', 'Nature', ..., 'Uncategorized', or custom
+  categoryType String   @default("ai_generated") @map("category_type") // ai_generated | custom
+  photoCount   Int      @default(0) @map("photo_count")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  photos     Photo[]
+
+  @@unique([collectionId, name]) // race-safe find-or-create under worker concurrency 2
+  @@index([collectionId])
+  @@map("folders")
 }
 
 model Session {
@@ -65,17 +106,21 @@ model Photo {
   exifCameraMake   String?   @map("exif_camera_make")
   exifCameraModel  String?   @map("exif_camera_model")
 
-  // pHash dedup gate (worker step 3, per-user scope per spec Open Question 7).
+  // Dedup gate (worker step 3, per-user scope per spec Open Question 7).
+  // Two-phase since specs/ai-classification.md: SHA-256 exact pass first,
+  // then pHash near-dup pass (with degenerate flat-image guard).
   phash             String?  @map("phash")
   duplicateOfPhotoId String? @map("duplicate_of_photo_id")
+  fileSha256        String?  @map("file_sha256") // set at upload; pre-existing rows stay null (no backfill)
+  dedupMethod       String?  @map("dedup_method") // 'sha256' | 'phash', set only when flagged duplicate (observability)
 
   // Mocked classification result (worker step 4) - swappable interface,
   // never a real Vision API call this pass (see lib/classification).
   aiLabels     String[] @map("ai_labels")
   aiConfidence Float?   @map("ai_confidence")
 
-  // Collections/folders CRUD is out of scope this pass - columns exist per
-  // roadmap §6 but stay null/unused until that spec lands.
+  // Set by the worker's folder-assignment step (specs/ai-classification.md §4)
+  // or by a manual move (PATCH /api/photos/:id). Null until first classified.
   collectionId String? @map("collection_id")
   folderId     String? @map("folder_id")
 
@@ -84,11 +129,14 @@ model Photo {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  owner User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  jobs  ProcessingJob[]
+  owner      User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  jobs       ProcessingJob[]
+  collection Collection?     @relation(fields: [collectionId], references: [id])
+  folder     Folder?         @relation(fields: [folderId], references: [id])
 
   @@index([ownerId])
   @@index([ownerId, aiClassificationStatus])
+  @@index([ownerId, fileSha256])
   @@map("photos")
 }
 
