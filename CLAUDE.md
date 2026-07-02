@@ -16,10 +16,15 @@ You are the **Master Agent** by default — see `agents/MASTER.md` for the full 
 - Run `/orchestrate` for a full cycle (plan → build → test → report).
 - Run `/run-planner`, `/run-tester`, or `/run-developer` to invoke any single agent directly.
 - Always read `agents/STATUS.md` and the newest file in `reports/` before doing anything — that's the shared memory across sessions.
+- Also check `dashboard/FEATURE_QUEUE.md` if it exists — features Abhishek queued from the local insights dashboard. Unchecked (`[ ]`) entries are pending requests; mark them `[x]` (or note them in STATUS.md) once Planner has scoped them.
+
+## Local insights dashboard (not part of the app, gitignored)
+
+`dashboard/` is a personal, local-only cockpit (a zero-dependency Node server: `node dashboard/server.js` → http://localhost:4321) that reads STATUS.md, reports/, specs/, and the roadmap live, and lets Abhishek queue future features by writing structured blocks to `dashboard/FEATURE_QUEUE.md`. It is gitignored and never committed; the agents still read the queue from local disk. Don't build features into the dashboard folder or commit it.
 
 ## Coordination protocol (the whole point of this setup)
 
-1. Planner Agent turns the next roadmap item into a spec in `specs/<feature-name>.md` — skipped whenever there are bugs to fix instead.
+1. Planner Agent turns the next item into a spec in `specs/<feature-name>.md` — skipped whenever there are bugs to fix instead. **"Next item" is chosen in this order: (a) open bugs from the latest report, (b) any features Abhishek queued in `dashboard/FEATURE_QUEUE.md` via the local insights dashboard, then (c) the next unchecked roadmap item.** The queue file is local/gitignored but is read straight from disk — treat a queued feature as an explicit request from Abhishek that outranks the default roadmap order.
 2. Tester Agent writes a dated report to `reports/<date>_<time>.md`.
 3. Developer Agent reads the newest unread report first (bugs win), otherwise builds against the ready spec in `specs/`.
 4. Before building any new UI, Developer Agent presents 2–3 approaches with pros/cons and SVG wireframes in chat, posts the choice as a pending decision in `agents/STATUS.md`, and waits for Abhishek's pick. Once picked, that SVG itself becomes the design record in `design/wireframes/` — no Figma step.

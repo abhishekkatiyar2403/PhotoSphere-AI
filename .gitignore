@@ -9,3 +9,6 @@ logs/*.log
 .DS_Store
 reports/screenshots/
 *.tsbuildinfo
+
+# Local-only insights dashboard (personal cockpit — never committed)
+dashboard/

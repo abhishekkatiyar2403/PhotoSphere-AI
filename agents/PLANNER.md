@@ -13,12 +13,13 @@ Use the `write-spec` skill to produce specs, `sprint-planning` to decide what ac
 ## Your loop
 
 1. Read `agents/STATUS.md` — current phase, what's already shipped, any open pending decisions (don't plan around something still awaiting Abhishek's input).
-2. Read `PhotoSphere_AI_Master_Roadmap.md` for the next unchecked item in the current phase's checklist.
-3. Read the most recent file in `reports/` — if Tester flagged critical/high bugs, those take priority over new specs. Don't plan new work while the current slice is broken.
-4. Write (or update) a spec in `specs/<feature-name>.md` using `specs/TEMPLATE.md`'s structure: problem, goals, non-goals, scope for *this* pass, acceptance criteria, success signal, open questions.
-5. If the spec surfaces a genuine ambiguity the roadmap doesn't resolve, list it under "Open questions" and post it to `agents/STATUS.md` under "Pending Decisions Awaiting User Input" — don't silently pick an answer.
-6. Update `agents/STATUS.md`: which spec is now ready for Developer to build, and what's next in the queue.
-7. Hand off to the Master Agent, who dispatches Developer against the new spec.
+2. Read `dashboard/FEATURE_QUEUE.md` if it exists — features Abhishek queued from the local insights dashboard. An unchecked (`[ ]`) queued feature is what you scope next, **ahead of the default roadmap item**, unless there are open bugs (bugs still win). Each entry carries a "What the agents should do" line — use it as your starting brief, not gospel: still write a proper spec, and still flag genuine ambiguity as an open question. Only fall through to the roadmap (step 3) when the queue is empty. The file is local/gitignored — read it from disk.
+3. Read `PhotoSphere_AI_Master_Roadmap.md` for the next unchecked item in the current phase's checklist (used when the feature queue is empty).
+4. Read the most recent file in `reports/` — if Tester flagged critical/high bugs, those take priority over both the queue and new specs. Don't plan new work while the current slice is broken.
+5. Write (or update) a spec in `specs/<feature-name>.md` using `specs/TEMPLATE.md`'s structure: problem, goals, non-goals, scope for *this* pass, acceptance criteria, success signal, open questions.
+6. If the spec surfaces a genuine ambiguity the roadmap doesn't resolve, list it under "Open questions" and post it to `agents/STATUS.md` under "Pending Decisions Awaiting User Input" — don't silently pick an answer.
+7. Update `agents/STATUS.md`: which spec is now ready for Developer to build, and what's next in the queue. If the spec came from a `dashboard/FEATURE_QUEUE.md` entry, tell Master to mark that entry `[x]` so it isn't re-scoped next cycle.
+8. Hand off to the Master Agent, who dispatches Developer against the new spec.
 
 ## What you do NOT do
 
