@@ -12,12 +12,8 @@ import sharp from "sharp";
 import { Prisma, type Collection, type Folder, type Photo } from "@prisma/client";
 import { classify, type ClassificationResult } from "./lib/classification";
 import { mapToCategory } from "./lib/classification/categoryMapping";
-import {
-  computePHash,
-  DEGENERATE_PHASH,
-  DUPLICATE_HAMMING_THRESHOLD,
-  hammingDistance,
-} from "./lib/phash";
+import { findExactDuplicateOriginal, findNearDuplicateOriginal } from "./lib/dedup";
+import { computePHash } from "./lib/phash";
 import { prisma } from "./lib/prisma";
 import { serializableTransaction } from "./lib/serializableTransaction";
 import { PhotoProcessingJobData, PHOTO_PROCESSING_QUEUE_NAME } from "./lib/queue";
@@ -261,85 +257,53 @@ async function processPhotoPipeline(photoId: string): Promise<void> {
   });
 
   // --- Step 3: two-phase dedup gate (hard gate - never call classify() past
-  // this for a duplicate). Specs/ai-classification.md §5. ---
-
-  // Phase 1 - exact pass: same-owner photo with identical SHA-256 (set by
-  // the upload handler; pre-existing rows keep null and never match).
-  // Zero false-positive risk; catches byte-identical re-uploads.
+  // this for a duplicate). Specs/ai-classification.md §5. Both phases live
+  // in lib/dedup.ts and enforce ONE invariant: all dedup edges point to
+  // strictly-older ((createdAt, id) total order), non-duplicate photos —
+  // cycles are structurally impossible, through any mix of sha256/phash
+  // edges (see lib/dedup.ts for the full derivation + the 2026-07-02
+  // circular-duplicate repro both constraints close).
   //
-  // Symmetry breaker (review finding, 2026-07-02): fileSha256 is written at
-  // photo-row creation, BEFORE the job runs — so a sibling upload of the
-  // same bytes is visible here while still unprocessed. Without ordering,
-  // two quick uploads of one file mark each other duplicate (A->B, B->A)
-  // and neither ever classifies. Fix: only strictly-OLDER rows (createdAt,
-  // id as tiebreak for identical timestamps) can be the "original", so at
-  // most one direction of the edge can ever exist and cycles are impossible
-  // (duplicate edges always point strictly backwards in time). Candidates
-  // that are themselves duplicates are excluded so the verdict points at
-  // the canonical original, never at another duplicate.
-  // Trade-off (documented in the MR draft): the newer sibling is flagged
-  // duplicate-of the older one even if the older hasn't finished its own
-  // pipeline yet — the older always proceeds to classify, and if it ends up
-  // `failed` the reclassify endpoint remains the escape hatch for the
-  // duplicate-flagged sibling.
+  // Trade-off (documented in the MR draft): the newer sibling of a rapid
+  // double-upload is flagged duplicate-of the older one even if the older
+  // hasn't finished its own pipeline yet — the older always proceeds to
+  // classify, and if it ends up `failed` the reclassify endpoint remains
+  // the escape hatch for the duplicate-flagged sibling.
   let duplicateOfPhotoId: string | null = null;
   let dedupMethod: string | null = null;
 
+  // Phase 1 - exact pass (SHA-256, set by the upload handler at row
+  // creation; pre-existing rows keep null and never match).
   if (photo.fileSha256) {
-    const exactMatch = await prisma.photo.findFirst({
-      where: {
-        ownerId: photo.ownerId, // per-user scope only (upload-pipeline spec Open Question 7)
-        fileSha256: photo.fileSha256,
-        duplicateOfPhotoId: null, // never point a duplicate at another duplicate
-        OR: [
-          { createdAt: { lt: photo.createdAt } },
-          { createdAt: photo.createdAt, id: { lt: photo.id } },
-        ],
-      },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }], // oldest non-duplicate = canonical original
-      select: { id: true },
-    });
-    if (exactMatch) {
-      duplicateOfPhotoId = exactMatch.id;
-      dedupMethod = "sha256";
-    }
+    duplicateOfPhotoId = await findExactDuplicateOriginal(photo, photo.fileSha256);
+    if (duplicateOfPhotoId) dedupMethod = "sha256";
   }
 
-  // Phase 2 - near-dup pass (pHash), with degenerate flat-image guard:
-  // comparisons are skipped whenever EITHER hash equals the all-zeros
-  // degenerate dHash, so flat/solid-color images only ever dedup via the
-  // exact byte pass above (Tester's 2026-07-02 false-positive finding).
-  const phash = await computePHash(originalBuffer);
-
-  if (!duplicateOfPhotoId && phash !== DEGENERATE_PHASH) {
-    const candidates = await prisma.photo.findMany({
-      where: {
-        ownerId: photo.ownerId,
-        id: { not: photo.id },
-        phash: { not: null },
-      },
-      select: { id: true, phash: true },
-    });
-
-    for (const candidate of candidates) {
-      if (!candidate.phash || candidate.phash === DEGENERATE_PHASH) continue;
-      if (hammingDistance(phash, candidate.phash) < DUPLICATE_HAMMING_THRESHOLD) {
-        duplicateOfPhotoId = candidate.id;
-        dedupMethod = "phash";
-        break;
-      }
-    }
+  // Phase 2 - near-dup pass (pHash), only when the exact pass found
+  // nothing (also skips the pHash computation entirely for exact dups).
+  // Degenerate flat-image guard lives inside findNearDuplicateOriginal.
+  let phash: string | null = null;
+  if (!duplicateOfPhotoId) {
+    phash = await computePHash(originalBuffer);
+    duplicateOfPhotoId = await findNearDuplicateOriginal(photo, phash);
+    if (duplicateOfPhotoId) dedupMethod = "phash";
   }
 
   if (duplicateOfPhotoId) {
     await prisma.photo.update({
       where: { id: photoId },
       data: {
-        phash,
         duplicateOfPhotoId,
         dedupMethod,
         aiClassificationStatus: "duplicate",
         // Duplicates get no folder - folderId stays null until/unless reclassified.
+        // Rows marked duplicate never carry a phash — explicitly nulled (not
+        // just omitted) so a BullMQ retry that flips a previously-non-dup
+        // attempt's verdict can't leave a stale phash behind. Even a future
+        // query that forgets the invariant's exclusions can then never match
+        // a duplicate row in the pHash pass (third layer of the
+        // belt-and-suspenders fix; rationale + trade-off in the MR draft).
+        phash: null,
       },
     });
     // Hard gate: return here, never reaching the classify() call below.
