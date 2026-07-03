@@ -39,6 +39,7 @@ import {
   photosApi,
   unfiledPhotosApi,
 } from "@/lib/api";
+import { PhotoViewer, ViewerPhotoRef } from "@/components/PhotoViewer";
 
 const PAGE_LIMIT = 12;
 const POLL_INTERVAL_MS = 2000;
@@ -80,6 +81,13 @@ export default function OrganizePage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderError, setNewFolderError] = useState<string | null>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
+
+  // Photo viewer (specs/week7-8-dashboard-browser-viewer.md "Photo viewer"):
+  // clicking a card's thumbnail (not the Move <select>/Reclassify button)
+  // opens the shared viewer over the current grid page - same component as
+  // /browse, confirming "reachable from any grid" rather than being
+  // /browse-specific.
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   // Guards against stale async responses clobbering newer state - e.g.
   // switching folders quickly, or a reclassify poll resolving after the
@@ -504,6 +512,13 @@ export default function OrganizePage() {
   const rangeStart = total === 0 ? 0 : offset + 1;
   const rangeEnd = Math.min(offset + PAGE_LIMIT, total);
 
+  const viewerPhotos: ViewerPhotoRef[] = photos.map((p) => ({
+    id: p.id,
+    originalFilename: p.originalFilename,
+    status: p.status,
+    duplicateOfLabel: p.duplicateOfLabel,
+  }));
+
   return (
     <main className="organize-shell">
       <div className="organize-topbar">
@@ -600,7 +615,7 @@ export default function OrganizePage() {
               {!gridLoading && photos.length > 0 && (
                 <>
                   <div className="organize-grid" data-testid="organize-grid">
-                    {photos.map((photo) => (
+                    {photos.map((photo, i) => (
                       <PhotoCard
                         key={photo.id}
                         photo={photo}
@@ -608,6 +623,7 @@ export default function OrganizePage() {
                         currentFolderId={selectedFolder.id}
                         onMove={handleMove}
                         onReclassify={handleReclassify}
+                        onOpenViewer={() => setViewerIndex(i)}
                       />
                     ))}
                   </div>
@@ -629,6 +645,15 @@ export default function OrganizePage() {
           )}
         </section>
       </div>
+
+      {viewerIndex !== null && (
+        <PhotoViewer
+          photos={viewerPhotos}
+          index={viewerIndex}
+          onIndexChange={setViewerIndex}
+          onClose={() => setViewerIndex(null)}
+        />
+      )}
     </main>
   );
 }
@@ -639,12 +664,14 @@ function PhotoCard({
   currentFolderId,
   onMove,
   onReclassify,
+  onOpenViewer,
 }: {
   photo: CardState;
   folders: Folder[];
   currentFolderId: string;
   onMove: (photoId: string, targetFolderId: string) => void;
   onReclassify: (photoId: string) => void;
+  onOpenViewer: () => void;
 }) {
   const moveTargets = folders.filter((f) => f.id !== currentFolderId);
   const cardClass =
@@ -656,7 +683,13 @@ function PhotoCard({
 
   return (
     <div className={cardClass} data-testid={`photo-card-${photo.id}`} data-status={photo.status}>
-      <div className="organize-card-thumb">
+      <button
+        type="button"
+        className="organize-card-thumb"
+        data-testid={`photo-thumb-${photo.id}`}
+        onClick={onOpenViewer}
+        style={{ border: "none", padding: 0, cursor: "pointer" }}
+      >
         {photo.thumbnailUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={photo.thumbnailUrl} alt={photo.originalFilename} />
@@ -667,7 +700,7 @@ function PhotoCard({
         ) : (
           "no preview"
         )}
-      </div>
+      </button>
 
       <p className="organize-card-filename">{photo.originalFilename}</p>
 

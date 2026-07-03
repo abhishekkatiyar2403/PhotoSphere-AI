@@ -106,11 +106,32 @@ function uploadFileWithProgress(
   });
 }
 
+// Full photo detail (GET /api/photos/:id) - the shape the Photo viewer needs
+// on top of what a grid card already has: full-resolution original.url and
+// the exif object. specs/week7-8-dashboard-browser-viewer.md confirmed this
+// exact shape against the live route (no new backend field needed).
+export type PhotoDetail = {
+  id: string;
+  status: "pending" | "processing" | "done" | "duplicate" | "failed";
+  originalFilename: string;
+  original: { url: string; expiresInSeconds: number };
+  thumbnails: Record<string, string>;
+  exif: {
+    takenAt: string | null;
+    gpsLat: number | null;
+    gpsLng: number | null;
+    cameraMake: string | null;
+    cameraModel: string | null;
+  };
+  folder: { id: string; name: string } | null;
+  collectionId: string | null;
+};
+
 export const photosApi = {
   upload: uploadFile,
   uploadWithProgress: uploadFileWithProgress,
   status: (photoId: string) => apiFetch(`/api/photos/${photoId}/status`, { method: "GET" }),
-  get: (photoId: string) => apiFetch(`/api/photos/${photoId}`, { method: "GET" }),
+  get: (photoId: string): Promise<PhotoDetail> => apiFetch(`/api/photos/${photoId}`, { method: "GET" }),
   move: (photoId: string, folderId: string) =>
     apiFetch(`/api/photos/${photoId}`, { method: "PATCH", body: JSON.stringify({ folderId }) }),
   reclassify: (photoId: string) =>
