@@ -1,7 +1,7 @@
 # MR: Dashboard page (Option B — storage-meter hero + folder tiles)
 
 **Branch:** `feature/ai-classification` → `main`
-**Commit:** `064cc26`
+**Commit:** `fcff301`
 **Spec:** `specs/week7-8-dashboard-browser-viewer.md` (Dashboard page section)
 **Design record:** `design/wireframes/dashboard.svg` (Option B, picked by Abhishek)
 

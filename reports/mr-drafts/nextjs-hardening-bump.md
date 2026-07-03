@@ -1,7 +1,7 @@
 # MR Draft — Next.js dependency-hardening bump (14.2.13 → 14.2.35)
 
 **Branch:** `feature/ai-classification`
-**Commit:** `9295354170cbc77530f6c61c6320584085f2f8a4`
+**Commit:** `ad441da`
 **Type:** `chore` — dependency-hardening pass (no feature work, no app source change)
 **Status:** committed locally, NOT pushed (per project ground rules — no remote push without Abhishek's explicit go-ahead)
 
