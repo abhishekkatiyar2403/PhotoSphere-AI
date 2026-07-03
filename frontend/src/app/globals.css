@@ -198,3 +198,309 @@ body {
   cursor: pointer;
   font-size: 13px;
 }
+
+/* Organize page (design/wireframes/reclassify-ui.svg, Option A):
+   top bar + sidebar folder tree + main photo grid. Colors/spacing reuse the
+   existing --color-* variables and card/border conventions above rather
+   than inventing a new palette - the wireframe sets structure, not exact
+   pixel styling (per the build brief). */
+.organize-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.organize-topbar {
+  background: var(--color-primary);
+  color: #fff;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+}
+
+.organize-topbar h1 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.organize-topbar span {
+  font-size: 12px;
+  color: #cdd8f7;
+}
+
+.organize-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.organize-sidebar {
+  flex: 0 0 240px;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  padding: 16px 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.organize-sidebar h2 {
+  font-size: 12px;
+  color: var(--color-muted);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  margin: 0 8px 12px;
+}
+
+.organize-folder-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 auto;
+}
+
+.organize-folder-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text);
+  margin-bottom: 2px;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+
+.organize-folder-row:hover {
+  background: var(--color-bg);
+}
+
+.organize-folder-row.active {
+  background: #e8eefc;
+  color: #1b3a9e;
+  font-weight: 600;
+}
+
+.organize-folder-row .count {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.organize-folder-row.active .count {
+  color: #1b3a9e;
+}
+
+.organize-new-folder {
+  border-top: 1px solid var(--color-border);
+  margin-top: 12px;
+  padding-top: 12px;
+  display: flex;
+  gap: 6px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.organize-new-folder input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.organize-new-folder button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.organize-new-folder button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.organize-new-folder-error {
+  color: var(--color-error);
+  font-size: 11px;
+  margin: 4px 8px 0;
+}
+
+.organize-main {
+  flex: 1 1 auto;
+  padding: 24px 28px;
+  overflow-y: auto;
+}
+
+.organize-main-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.organize-main-header h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.organize-main-header span {
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.organize-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.organize-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.organize-card.failed {
+  border-color: #e2b6b6;
+}
+
+.organize-card.duplicate {
+  border-color: #d8c9a2;
+}
+
+.organize-card-thumb {
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  background: #d7dbe4;
+  border-radius: 4px;
+  object-fit: cover;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted);
+  font-size: 11px;
+  overflow: hidden;
+}
+
+.organize-card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.organize-card.failed .organize-card-thumb {
+  background: #f3e2e2;
+  color: #b05555;
+}
+
+.organize-card.duplicate .organize-card-thumb {
+  background: #f1ead6;
+  color: #9a7d2e;
+}
+
+.organize-card-filename {
+  font-size: 12px;
+  margin: 8px 0 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.organize-card-meta {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin: 0 0 8px;
+  min-height: 14px;
+}
+
+.organize-card.failed .organize-card-meta {
+  color: #b05555;
+}
+
+.organize-card.duplicate .organize-card-meta {
+  color: #9a7d2e;
+}
+
+.organize-card-action select,
+.organize-card-action button {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.organize-card-action select {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.organize-card-action button {
+  border: none;
+}
+
+.organize-card.failed .organize-card-action button {
+  background: #b05555;
+  color: #fff;
+}
+
+.organize-card.duplicate .organize-card-action button {
+  background: #9a7d2e;
+  color: #fff;
+}
+
+.organize-card-action button:disabled,
+.organize-card-action select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.organize-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.organize-pagination button {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.organize-pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.organize-pagination span {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.organize-empty {
+  color: var(--color-muted);
+  font-size: 13px;
+  padding: 24px 0;
+}

@@ -179,6 +179,12 @@ router.get(
     return res.status(200).json({
       id: photo.id,
       status: photo.aiClassificationStatus,
+      // Additive (organize UI, design/wireframes/reclassify-ui.svg): a
+      // duplicate card's "duplicate of X" label needs the original photo's
+      // filename, and this endpoint - the only per-photo detail endpoint -
+      // never exposed it before. Owner-only, trivial metadata, same
+      // rationale as the exif addition below.
+      originalFilename: photo.originalFilename,
       original: { url: originalUrl, expiresInSeconds: 60 },
       thumbnails,
       // Additive fields per specs/ai-classification.md §7 (carry-over c:

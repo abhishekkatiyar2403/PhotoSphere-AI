@@ -111,4 +111,68 @@ export const photosApi = {
   uploadWithProgress: uploadFileWithProgress,
   status: (photoId: string) => apiFetch(`/api/photos/${photoId}/status`, { method: "GET" }),
   get: (photoId: string) => apiFetch(`/api/photos/${photoId}`, { method: "GET" }),
+  move: (photoId: string, folderId: string) =>
+    apiFetch(`/api/photos/${photoId}`, { method: "PATCH", body: JSON.stringify({ folderId }) }),
+  reclassify: (photoId: string) =>
+    apiFetch(`/api/photos/${photoId}/reclassify`, { method: "POST" }),
+};
+
+// Organize page (specs/ai-classification.md §6 - reclassification UI,
+// design/wireframes/reclassify-ui.svg Option A). Thin wrappers around the
+// already-shipped collections/folders endpoints - same apiFetch/ApiError
+// conventions as authApi/photosApi above.
+export const collectionsApi = {
+  list: (): Promise<{ collections: { id: string; name: string; isDefault: boolean; createdAt: string }[] }> =>
+    apiFetch("/api/collections", { method: "GET" }),
+};
+
+export type Folder = {
+  id: string;
+  name: string;
+  categoryType: "ai_generated" | "custom";
+  photoCount: number;
+  createdAt: string;
+};
+
+export const foldersApi = {
+  list: (collectionId: string): Promise<{ folders: Folder[] }> =>
+    apiFetch(`/api/collections/${collectionId}/folders`, { method: "GET" }),
+  create: (collectionId: string, name: string): Promise<Folder> =>
+    apiFetch(`/api/collections/${collectionId}/folders`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+};
+
+export type FolderPhoto = {
+  id: string;
+  originalFilename: string;
+  status: "pending" | "processing" | "done" | "duplicate" | "failed";
+  aiLabels: string[];
+  aiConfidence: number | null;
+  // Additive fields (backend change, see routes/folders.ts's PHOTO_CARD_SELECT/
+  // toPhotoCard) - only meaningful when status === "duplicate".
+  duplicateOfPhotoId: string | null;
+  dedupMethod: "sha256" | "phash" | null;
+  thumbnailUrl: string | null;
+};
+
+type FolderPhotosResponse = { photos: FolderPhoto[]; total: number; limit: number; offset: number };
+
+export const folderPhotosApi = {
+  list: (folderId: string, params: { limit: number; offset: number }): Promise<FolderPhotosResponse> =>
+    apiFetch(`/api/folders/${folderId}/photos?limit=${params.limit}&offset=${params.offset}`, {
+      method: "GET",
+    }),
+};
+
+// GET /api/collections/:id/unfiled-photos (backend addition - see
+// routes/collections.ts for the gap this closes: failed/duplicate photos
+// have folderId: null and are otherwise invisible to any folder listing).
+export const unfiledPhotosApi = {
+  list: (collectionId: string, params: { limit: number; offset: number }): Promise<FolderPhotosResponse> =>
+    apiFetch(
+      `/api/collections/${collectionId}/unfiled-photos?limit=${params.limit}&offset=${params.offset}`,
+      { method: "GET" },
+    ),
 };
