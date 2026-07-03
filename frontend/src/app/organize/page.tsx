@@ -5,15 +5,26 @@
 // tree + thumbnail grid, per-card "Move to..." dropdown, Reclassify on
 // failed/duplicate cards, inline folder creation.
 //
-// Backend gap found and closed (see routes/collections.ts's new
-// GET /api/collections/:id/unfiled-photos): failed/duplicate photos always
-// have folderId: null (the dedup gate short-circuits before folder
-// assignment for duplicates; a failed pipeline job never reaches folder
-// assignment at all), so they're structurally invisible to
-// GET /api/folders/:id/photos for every real folder - yet the wireframe
-// requires them to be visible and actionable. This page surfaces them via a
-// virtual "Unfiled" sidebar row (UNFILED_FOLDER_ID below) backed by that new
-// endpoint, styled identically to a real folder row.
+// Backend gap found and closed (see routes/photos.ts's
+// GET /api/photos/unfiled): failed/duplicate photos always have
+// folderId: null (the dedup gate short-circuits before folder assignment
+// for duplicates; a failed pipeline job never reaches folder assignment at
+// all), so they're structurally invisible to GET /api/folders/:id/photos
+// for every real folder - yet the wireframe requires them to be visible and
+// actionable. This page surfaces them via a virtual "Unfiled" sidebar row
+// (UNFILED_FOLDER_ID below) backed by that endpoint, styled identically to
+// a real folder row.
+//
+// Bug fix (reports/2026-07-03_0731.md "New Failures" [High]): the Unfiled
+// endpoint used to be collection-scoped (GET
+// /api/collections/:id/unfiled-photos), so a brand-new user whose very
+// first photo failed/deduped before any collection ever existed had no way
+// to reach it - this page's initial-load effect bailed out on an empty
+// GET /api/collections response before ever checking for unfiled photos.
+// GET /api/photos/unfiled is user-scoped instead (it was never really
+// collection-scoped server-side to begin with - see that route's comment),
+// so the initial-load effect below now always checks it, independent of
+// whether a collection/folder has ever been created.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -110,14 +121,19 @@ export default function OrganizePage() {
       .finally(() => setChecking(false));
   }, [router]);
 
-  // ---- Refresh sidebar: real folders + the virtual Unfiled row's count ----
-  const loadFolders = useCallback(async (cId: string) => {
+  // ---- Refresh sidebar: real folders (if a collection exists yet) + the
+  // virtual Unfiled row's count (always - user-scoped, no collection
+  // dependency). cId may be null for a brand-new user who has never had a
+  // successful classification (no collection created yet) but whose
+  // first-ever upload already failed/deduped - see the initial-load effect
+  // below and reports/2026-07-03_0731.md "New Failures" [High].
+  const loadFolders = useCallback(async (cId: string | null) => {
     setFoldersLoading(true);
     setFoldersError(null);
     try {
       const [foldersRes, unfiledRes] = await Promise.all([
-        foldersApi.list(cId),
-        unfiledPhotosApi.list(cId, { limit: 1, offset: 0 }), // limit 1 - only `total` is needed for the sidebar count
+        cId ? foldersApi.list(cId) : Promise.resolve({ folders: [] as Folder[] }),
+        unfiledPhotosApi.list({ limit: 1, offset: 0 }), // limit 1 - only `total` is needed for the sidebar count
       ]);
       setFolders(foldersRes.folders);
       setUnfiledCount(unfiledRes.total);
@@ -135,7 +151,20 @@ export default function OrganizePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---- Initial load: default collection, then its folders ----
+  // ---- Initial load: default collection (if any) + its folders, PLUS the
+  // Unfiled count regardless of whether a collection exists yet.
+  //
+  // Bug fix (reports/2026-07-03_0731.md "New Failures" [High]): this used to
+  // bail out entirely ("no collection yet -> not an error, just an empty
+  // state") whenever GET /api/collections returned [], which is also true
+  // for a user whose first-ever upload already failed or deduped (the
+  // default "My Photos" collection is only lazily created at successful
+  // folder assignment, never reached by a failed job or a dedup
+  // short-circuit) - stranding that photo with no way to reach it, since
+  // the old unfiled-photos route required a collection id. loadFolders now
+  // always checks Unfiled via the user-scoped GET /api/photos/unfiled
+  // (routes/photos.ts), independent of collection existence, so this effect
+  // calls it either way instead of returning early.
   useEffect(() => {
     if (checking) return;
     let cancelled = false;
@@ -145,14 +174,8 @@ export default function OrganizePage() {
         const res = await collectionsApi.list();
         if (cancelled) return;
         const defaultCollection = res.collections.find((c) => c.isDefault) ?? res.collections[0] ?? null;
-        if (!defaultCollection) {
-          // No collection yet (worker lazily creates "My Photos" at first
-          // classification) - not an error, just an empty state.
-          setFoldersLoading(false);
-          return;
-        }
-        setCollectionId(defaultCollection.id);
-        const loaded = await loadFolders(defaultCollection.id);
+        setCollectionId(defaultCollection?.id ?? null);
+        const loaded = await loadFolders(defaultCollection?.id ?? null);
         if (cancelled) return;
         if (loaded.length > 0) {
           setSelectedFolderId((prev) => prev ?? loaded[0].id);
@@ -173,19 +196,33 @@ export default function OrganizePage() {
     };
   }, [checking, loadFolders, router]);
 
+  // ---- Refresh the sidebar after a reclassify resolves, picking up a
+  // brand-new collection if this was the user's first-ever successful
+  // classification (same bug class as the Unfiled-unreachable fix: before
+  // this, a first-ever reclassify success would silently keep
+  // collectionIdRef.current === null forever, since it's only ever set from
+  // the initial-load effect - the new Food/Animals/etc. folder would exist
+  // server-side but never appear in the sidebar without a manual reload). ----
+  function refreshSidebarAfterReclassify(statusCollectionId: string | null) {
+    const knownCollectionId = collectionIdRef.current ?? statusCollectionId ?? null;
+    if (!collectionIdRef.current && statusCollectionId) {
+      setCollectionId(statusCollectionId);
+    }
+    loadFolders(knownCollectionId);
+  }
+
   // ---- Load the selected folder's (or Unfiled's) photos, paginated ----
   const loadFolderPhotos = useCallback(
     async (folderId: string, pageOffset: number) => {
-      const cId = collectionIdRef.current;
-      if (folderId === UNFILED_FOLDER_ID && !cId) return;
-
+      // Unfiled is user-scoped (GET /api/photos/unfiled) - no collection
+      // dependency, so no early-return guard needed here anymore.
       const requestId = ++gridRequestIdRef.current;
       setGridLoading(true);
       setGridError(null);
       try {
         const res =
           folderId === UNFILED_FOLDER_ID
-            ? await unfiledPhotosApi.list(cId as string, { limit: PAGE_LIMIT, offset: pageOffset })
+            ? await unfiledPhotosApi.list({ limit: PAGE_LIMIT, offset: pageOffset })
             : await folderPhotosApi.list(folderId, { limit: PAGE_LIMIT, offset: pageOffset });
         if (requestId !== gridRequestIdRef.current) return; // a newer request superseded this one
 
@@ -396,7 +433,7 @@ export default function OrganizePage() {
         if (!stillInSameView) {
           setPhotos((prev) => prev.filter((p) => p.id !== photoId));
           setTotal((prev) => Math.max(0, prev - 1));
-          if (collectionIdRef.current) loadFolders(collectionIdRef.current);
+          refreshSidebarAfterReclassify(statusRes.collectionId);
           return;
         }
 
@@ -423,7 +460,7 @@ export default function OrganizePage() {
         if (statusRes.status === "duplicate" && statusRes.duplicateOfPhotoId) {
           resolveDuplicateLabel(photoId, statusRes.duplicateOfPhotoId, statusRes.dedupMethod ?? null, gridRequestIdRef.current);
         }
-        if (collectionIdRef.current) loadFolders(collectionIdRef.current); // counts may have changed
+        refreshSidebarAfterReclassify(statusRes.collectionId); // counts may have changed
       } catch (pollErr) {
         stopPoll(photoId);
         if (isAuthError(pollErr)) {

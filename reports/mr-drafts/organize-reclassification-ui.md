@@ -220,3 +220,101 @@ regressions, no flake.
   original's filename is one request per duplicate card per page load —
   fine at the current `limit=12` scale, would want a batched lookup if
   duplicate volume grows significantly.
+
+## Addendum (2026-07-03): fix for Tester's High-severity finding — Unfiled unreachable before any collection exists
+
+**Report:** `reports/2026-07-03_0731.md`, "New Failures" — a brand-new user
+whose very first photo fails classification or resolves as a duplicate
+(before any collection has ever been created — the default "My Photos"
+collection is only lazily created at successful folder assignment) had that
+photo permanently unreachable in the Organize UI: `GET /api/collections`
+returned `[]`, and the page's initial-load effect bailed out entirely
+without ever checking for unfiled photos, since the old
+`unfiledPhotosApi.list()` required a collection id that didn't exist yet.
+
+**Fix chosen: new user-scoped `GET /api/photos/unfiled`, kept additive
+alongside the old collection-scoped route.** The old route
+(`GET /api/collections/:id/unfiled-photos`) already noted in its own code
+comment that it was truly scoped by `ownerId`, not `collectionId` — the
+collection id was only ever used for an ownership check unrelated to the
+actual query filter (`{ownerId, folderId: null, status IN (failed,
+duplicate)}`). Rather than teach the frontend to work around a
+collection-shaped API for something that was never actually
+collection-scoped, or eagerly create collections at upload time (a bigger
+behavioral change affecting the documented "empty array before first
+classification" contract other endpoints/tests depend on — see
+`GET /api/collections`'s own code comment), the new route is the same
+query/shape/pagination convention with no collection dependency at all.
+
+**Additive, not migrated — both routes remain.** Nothing outside this fix
+depends on removing the old collection-scoped route: it still works
+correctly once a collection exists (own test coverage untouched, still
+passing), and no other code besides this one frontend page ever called it.
+Migrating it would be pure churn with zero risk reduction, so it stays.
+
+**Files changed:**
+- `backend/src/routes/photos.ts` — new `GET /api/photos/unfiled` (registered
+  before `GET /api/photos/:id` so the literal path segment isn't swallowed
+  by the `:id` param route).
+- `backend/src/lib/photoCard.ts` (new) — `PHOTO_CARD_SELECT`/`toPhotoCard`
+  extracted out of `routes/folders.ts` into a shared lib module (byte-for-byte
+  behavior, no logic change) so `routes/photos.ts` doesn't have to import
+  from `routes/folders.ts` (which itself imports `thumbnailKey` from
+  `routes/photos.ts` — would have been a circular import).
+- `backend/src/lib/storageKeys.ts` (new) — `thumbnailKey`/`originalKey`
+  extracted out of `routes/photos.ts` for the same circular-import reason;
+  `routes/photos.ts` re-exports both for backward compatibility
+  (`worker.ts` and `routes/folders.ts` still import them from there).
+- `backend/src/routes/folders.ts`, `backend/src/routes/collections.ts` —
+  import-path updates only (now import `PHOTO_CARD_SELECT`/`toPhotoCard`
+  from `lib/photoCard.ts`); route bodies unchanged.
+- `frontend/src/lib/api.ts` — `unfiledPhotosApi.list()` no longer takes a
+  `collectionId` param; calls `GET /api/photos/unfiled`.
+- `frontend/src/app/organize/page.tsx` — the initial-load effect no longer
+  bails out when `GET /api/collections` is empty; `loadFolders` now accepts
+  `collectionId: string | null` and always checks Unfiled regardless.
+  Also fixed a **second latent instance of the same bug class**, found
+  during self-review: a user's first-ever *successful* reclassify (recovering
+  a failed/duplicate photo into a real folder) used to leave
+  `collectionIdRef.current` stuck at `null` forever, since it was only ever
+  set from the initial-load effect — the newly-created folder would exist
+  server-side but never appear in the sidebar without a manual reload. Added
+  `refreshSidebarAfterReclassify`, which adopts the collection id from the
+  reclassify poll's own status response if the client didn't have one yet.
+- `backend/src/__tests__/classification.smoke.test.ts` — new `describe`
+  block with its own fresh user (own signup + own `afterAll` cleanup),
+  covering: zero collections immediately after signup; a `FORCE_FAIL_`
+  first-ever upload surfaced via `GET /api/photos/unfiled` with no collection
+  ever created, then recovered via reclassify (confirming the old
+  collection-scoped route still works once the collection now exists); a
+  byte-identical duplicate-of-nothing-yet-classified surfaced the same way;
+  401 with no session; no cross-user leakage.
+
+**Manual verification (live browser, not just described):**
+1. **Reproduced the original bug first**, against the pre-fix commit
+   (temporarily stashed the fix, confirmed the dev servers' `tsx watch`
+   picked up the reverted code, then restored the fix afterward): signed up
+   a fresh user via the real signup form in headless Chromium, uploaded a
+   `FORCE_FAIL_` photo as their first-ever upload, polled to `failed`,
+   confirmed `GET /api/collections` returned `{"collections":[]}`, then
+   loaded `/organize` as that user — sidebar showed "No folders yet…", zero
+   Unfiled rows, screenshot captured (`repro-before-fix.png` in scratchpad).
+2. **Confirmed the fix resolves it**, same script against the restored code:
+   same repro steps, same empty `GET /api/collections` response, but the
+   sidebar now rendered `Unfiled (1)` correctly — screenshot captured
+   (`repro-after-fix.png`).
+3. **Confirmed the full interaction loop**, not just the row rendering: a
+   third script opened Unfiled, clicked Reclassify on the failed card,
+   confirmed the button showed "Reclassifying…", waited for the card to
+   leave the grid, confirmed via the status endpoint the photo reached
+   `done` in folder "Animals" with a newly non-null `collectionId`, and
+   confirmed the sidebar picked up the new "Animals (1)" folder row
+   *without a manual page reload* (verifying the second latent bug's fix
+   too) — screenshot captured (`repro-after-reclassify.png`).
+4. Cleaned up all repro test users from the dev database afterward.
+
+**Testing:** `npm run typecheck -w backend`/`-w frontend` clean;
+`npm run lint -w backend`/`-w frontend` clean; `NODE_ENV=test npm run test -w
+backend` — **56/56, run twice back-to-back**, no flake, no regression to any
+previously-passing test (move, reclassify, folder creation, pagination,
+cross-user isolation all still pass unchanged).

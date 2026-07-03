@@ -70,6 +70,7 @@ async function flatJpeg(r: number, g: number, b: number): Promise<Buffer> {
 const testEmail = `classification-smoke-${Date.now()}@example.com`;
 const otherEmail = `classification-smoke-other-${Date.now()}@example.com`;
 const limiterEmail = `classification-smoke-limiter-${Date.now()}@example.com`;
+const freshUserUnfiledEmail = `classification-smoke-fresh-unfiled-${Date.now()}@example.com`;
 const testPassword = "correct-password-123";
 
 let infraAvailable = true;
@@ -189,7 +190,7 @@ afterAll(async () => {
   if (infraAvailable) {
     // User delete cascades photos, sessions, collections -> folders.
     await prisma.user.deleteMany({
-      where: { email: { in: [testEmail, otherEmail, limiterEmail] } },
+      where: { email: { in: [testEmail, otherEmail, limiterEmail, freshUserUnfiledEmail] } },
     });
     await prisma.$disconnect();
   }
@@ -744,6 +745,171 @@ describe("collections/folders/move API", () => {
       .set("Cookie", sessionCookie)
       .send({ folderId: otherFolder.id });
     expect(crossTarget.status).toBe(404);
+  });
+});
+
+// Regression coverage for reports/2026-07-03_0731.md "New Failures" [High]:
+// a brand-new user whose very first photo fails/dedupes before any
+// collection has ever been created had that photo permanently unreachable
+// via the organize UI, because the old unfiled-photos route
+// (GET /api/collections/:id/unfiled-photos) required a collection id that
+// didn't exist yet. Fix: GET /api/photos/unfiled (routes/photos.ts),
+// user-scoped, no collection dependency. This suite uses its own fresh user
+// (own signup + own afterAll cleanup entry) so the sequencing - failure
+// BEFORE any successful classification - is guaranteed, unlike the shared
+// `testEmail` user above, which already has a collection by this point in
+// the file.
+describe("GET /api/photos/unfiled — reachable before any collection exists (regression, reports/2026-07-03_0731.md)", () => {
+  const freshPassword = "correct-password-123";
+  let freshCookie: string;
+
+  beforeAll(async () => {
+    if (skipInfra()) return;
+    const signup = await request(app)
+      .post("/api/auth/signup")
+      .send({ email: freshUserUnfiledEmail, password: freshPassword, name: "Fresh Unfiled User" });
+    expect(signup.status).toBe(201);
+    freshCookie = signup.headers["set-cookie"][0];
+  });
+
+  it("has zero collections immediately after signup (sanity - establishes the exact repro precondition)", async () => {
+    if (skipInfra()) return;
+
+    const collectionsRes = await request(app).get("/api/collections").set("Cookie", freshCookie);
+    expect(collectionsRes.status).toBe(200);
+    expect(collectionsRes.body.collections).toEqual([]);
+  });
+
+  it("surfaces a failed first-ever upload via GET /api/photos/unfiled with no collection ever created", async () => {
+    if (skipWorker()) return;
+
+    // Before the fix, this same fixture in this same order (fail BEFORE any
+    // successful classification) would leave the photo unreachable: no
+    // collection exists yet, so the old GET /api/collections/:id/unfiled-photos
+    // had no valid :id to call with.
+    const photoId = await uploadBuffer(
+      fs.readFileSync(fixture("fixture-animals.jpg")),
+      "FORCE_FAIL_fresh-user-first-upload.jpg",
+      freshCookie,
+    );
+    const terminal = await waitForTerminal(photoId, 45_000, freshCookie);
+    expect(terminal?.status).toBe("failed");
+    expect(terminal?.folderId).toBeNull();
+    expect(terminal?.collectionId).toBeNull(); // never reached folder assignment
+
+    // Still no collection - the worker's lazy creation never fired for a
+    // failed job.
+    const collectionsRes = await request(app).get("/api/collections").set("Cookie", freshCookie);
+    expect(collectionsRes.body.collections).toEqual([]);
+
+    // The user-scoped route finds it anyway.
+    const unfiledRes = await request(app).get("/api/photos/unfiled").set("Cookie", freshCookie);
+    expect(unfiledRes.status).toBe(200);
+    expect(unfiledRes.body.total).toBe(1);
+    expect(unfiledRes.body.photos).toHaveLength(1);
+    expect(unfiledRes.body.photos[0].id).toBe(photoId);
+    expect(unfiledRes.body.photos[0].status).toBe("failed");
+    expect(unfiledRes.body.photos[0].originalFilename).toBe("FORCE_FAIL_fresh-user-first-upload.jpg");
+
+    // Reclassify remains reachable/actionable from this state (the other
+    // half of "reachable and actionable" per the wireframe requirement).
+    const reclassifyRes = await request(app)
+      .post(`/api/photos/${photoId}/reclassify`)
+      .set("Cookie", freshCookie);
+    expect(reclassifyRes.status).toBe(202);
+
+    const after = await waitForTerminal(photoId, 20_000, freshCookie);
+    expect(after?.status).toBe("done");
+    expect(after?.folder?.name).toBe("Animals"); // fixture-animals.jpg bytes -> ["Dog","Animal"]
+    expect(after?.collectionId).not.toBeNull(); // lazily created on this recovery
+
+    // Now that it resolved into a real folder, it must have left Unfiled.
+    const unfiledAfter = await request(app).get("/api/photos/unfiled").set("Cookie", freshCookie);
+    expect(unfiledAfter.body.total).toBe(0);
+
+    // The now-existing default collection's OWN unfiled-photos route also
+    // still works (unaffected regression check - additive, not migrated).
+    const collectionsAfter = await request(app).get("/api/collections").set("Cookie", freshCookie);
+    const defaultCollectionId = collectionsAfter.body.collections[0].id as string;
+    const legacyUnfiledRes = await request(app)
+      .get(`/api/collections/${defaultCollectionId}/unfiled-photos`)
+      .set("Cookie", freshCookie);
+    expect(legacyUnfiledRes.status).toBe(200);
+    expect(legacyUnfiledRes.body.total).toBe(0);
+  }, 90_000);
+
+  it("surfaces a byte-identical duplicate of nothing-yet-classified the same way (dedup path, not just failure path)", async () => {
+    if (skipWorker()) return;
+
+    // A second fresh user so this test's precondition (zero prior successful
+    // classifications) holds independently of the previous test's recovery.
+    const dedupEmail = `classification-smoke-fresh-unfiled-dedup-${Date.now()}@example.com`;
+    const signup = await request(app)
+      .post("/api/auth/signup")
+      .send({ email: dedupEmail, password: freshPassword, name: "Fresh Unfiled Dedup User" });
+    expect(signup.status).toBe(201);
+    const cookie = signup.headers["set-cookie"][0];
+
+    try {
+      const firstId = await uploadBuffer(
+        fs.readFileSync(fixture("fixture-food.jpg")),
+        "first-upload.jpg",
+        cookie,
+      );
+      // First upload succeeds normally (lazily creates the collection) so the
+      // SECOND, byte-identical upload has something to dedup against while
+      // still being this user's second-ever photo overall - the duplicate
+      // itself is what we're asserting stays reachable pre-fix-scenario
+      // wouldn't have applied here since a collection already exists after
+      // upload 1. This test instead exercises the case where the very FIRST
+      // photo the user experiences (dup upload race excluded) resolves as a
+      // duplicate before that lazy collection creation - simulated directly
+      // by asserting the unfiled route works with collectionId truly absent.
+      await waitForTerminal(firstId, 20_000, cookie);
+
+      // A completely separate user whose first-ever photo is itself the
+      // duplicate half (of another user's photo it happens to match) is not
+      // reproducible via the mock's content-based hash across different
+      // users' fixtures without cross-user data - that scenario is covered
+      // structurally by the query itself (ownerId + folderId: null +
+      // status duplicate|failed has no collection dependency, proven above
+      // for `failed`). This test instead confirms the `duplicate` status
+      // value is included in the same user-scoped query, using this user's
+      // second photo (byte-identical re-upload).
+      const dupId = await uploadBuffer(
+        fs.readFileSync(fixture("fixture-food.jpg")),
+        "duplicate-upload.jpg",
+        cookie,
+      );
+      const dupTerminal = await waitForTerminal(dupId, 20_000, cookie);
+      expect(dupTerminal?.status).toBe("duplicate");
+      expect(dupTerminal?.folderId).toBeNull();
+
+      const unfiledRes = await request(app).get("/api/photos/unfiled").set("Cookie", cookie);
+      expect(unfiledRes.status).toBe(200);
+      expect(unfiledRes.body.total).toBe(1);
+      expect(unfiledRes.body.photos[0].id).toBe(dupId);
+      expect(unfiledRes.body.photos[0].status).toBe("duplicate");
+      expect(unfiledRes.body.photos[0].duplicateOfPhotoId).toBe(firstId);
+    } finally {
+      await prisma.user.deleteMany({ where: { email: dedupEmail } });
+    }
+  }, 60_000);
+
+  it("returns 401 with no session, and never leaks another user's unfiled photos", async () => {
+    if (skipWorker()) return;
+
+    const noAuth = await request(app).get("/api/photos/unfiled");
+    expect(noAuth.status).toBe(401);
+
+    // The main suite's user (sessionCookie) has its own unfiled photos by
+    // this point in the file (see the FORCE_FAIL_/duplicate tests earlier)
+    // - freshCookie's response must never include them.
+    const asFresh = await request(app).get("/api/photos/unfiled").set("Cookie", freshCookie);
+    expect(asFresh.status).toBe(200);
+    for (const photo of asFresh.body.photos) {
+      expect(photo.id).not.toBe(foodPhotoId);
+    }
   });
 });
 

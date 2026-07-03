@@ -3,9 +3,9 @@ import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
 import { prisma } from "../lib/prisma";
+import { PHOTO_CARD_SELECT, toPhotoCard } from "../lib/photoCard";
 import { createFolderSchema, folderPhotosQuerySchema } from "../lib/validation";
 import { requireAuth } from "../middleware/requireAuth";
-import { PHOTO_CARD_SELECT, toPhotoCard } from "./folders";
 
 /**
  * Collections routes (specs/ai-classification.md §6). Listing + folder

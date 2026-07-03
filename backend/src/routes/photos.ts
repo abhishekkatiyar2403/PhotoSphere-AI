@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { Router } from "express";
+import { Prisma } from "@prisma/client";
 import multer from "multer";
 import { ZodError } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
@@ -9,10 +10,12 @@ import { serializableTransaction } from "../lib/serializableTransaction";
 import { PhotoProcessingJobData, photoProcessingQueue } from "../lib/queue";
 import { putObject } from "../lib/storage";
 import { getPresignedGetUrl } from "../lib/storage";
-import { movePhotoSchema } from "../lib/validation";
+import { originalKey, thumbnailKey } from "../lib/storageKeys";
+import { folderPhotosQuerySchema, movePhotoSchema } from "../lib/validation";
 import { requireAuth } from "../middleware/requireAuth";
 import { reclassifyRateLimiter } from "../middleware/reclassifyRateLimiter";
 import { uploadRateLimiter } from "../middleware/uploadRateLimiter";
+import { PHOTO_CARD_SELECT, toPhotoCard } from "../lib/photoCard";
 
 const router = Router();
 
@@ -26,14 +29,6 @@ const upload = multer({
 });
 
 const THUMBNAIL_SIZES = [150, 400, 1200] as const;
-
-function thumbnailKey(ownerId: string, photoId: string, size: number): string {
-  return `${ownerId}/${photoId}/thumb_${size}.jpg`;
-}
-
-function originalKey(ownerId: string, photoId: string, extension: string): string {
-  return `${ownerId}/${photoId}/original.${extension}`;
-}
 
 const MIME_TO_EXTENSION: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -141,6 +136,77 @@ router.post(
       photoId: photo.id,
       jobId: bullJob.id,
       status: "pending",
+    });
+  }),
+);
+
+// GET /api/photos/unfiled — paginated, newest first. User-scoped (NOT
+// collection-scoped), so it works even before the user has ever had a
+// collection created. Registered BEFORE GET /api/photos/:id so the literal
+// "unfiled" path segment isn't swallowed by the :id param route.
+//
+// Bug fix (reports/2026-07-03_0731.md "New Failures" [High]): a brand-new
+// user whose very first photo fails classification or resolves as a
+// duplicate — before any collection has ever been created (the default "My
+// Photos" collection is only lazily created at successful folder
+// assignment, see worker.ts) — had that photo permanently unreachable in
+// the Organize UI. GET /api/collections returned [], so the frontend's
+// initial-load effect bailed out before ever calling the old
+// collection-scoped GET /api/collections/:id/unfiled-photos (which itself
+// requires a collection id that doesn't exist yet in this scenario).
+//
+// That old route's own code comment already noted it was truly scoped by
+// ownerId, not collectionId — the collection id was only ever used for an
+// ownership check unrelated to the actual query filter. This route is the
+// same query, same PHOTO_CARD_SELECT/toPhotoCard shape and pagination
+// conventions as GET /api/folders/:id/photos and the (now-superseded)
+// GET /api/collections/:id/unfiled-photos, but with no collection
+// dependency at all — the correct scope for something that was never
+// actually collection-scoped.
+//
+// The old collection-scoped route is left in place (additive, not migrated)
+// since nothing outside this fix depends on removing it: it still works
+// correctly once a collection exists, has its own test coverage, and
+// removing it would be pure churn with zero risk reduction. The frontend
+// (organize/page.tsx) has been switched to call this route instead.
+router.get(
+  "/unfiled",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    let query;
+    try {
+      query = folderPhotosQuerySchema.parse(req.query);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: err.flatten() });
+      }
+      throw err;
+    }
+
+    const where: Prisma.PhotoWhereInput = {
+      ownerId: req.user!.id,
+      folderId: null,
+      aiClassificationStatus: { in: ["failed", "duplicate"] },
+    };
+
+    const [total, photos] = await prisma.$transaction([
+      prisma.photo.count({ where }),
+      prisma.photo.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: query.offset,
+        take: query.limit,
+        select: PHOTO_CARD_SELECT,
+      }),
+    ]);
+
+    const items = await Promise.all(photos.map(toPhotoCard));
+
+    return res.status(200).json({
+      photos: items,
+      total,
+      limit: query.limit,
+      offset: query.offset,
     });
   }),
 );
@@ -399,4 +465,8 @@ router.post(
 );
 
 export default router;
-export { THUMBNAIL_SIZES, thumbnailKey, originalKey, MAX_UPLOAD_BYTES };
+export { THUMBNAIL_SIZES, MAX_UPLOAD_BYTES };
+// Re-exported for backward compatibility (worker.ts, routes/folders.ts
+// import these from here) - the real implementations now live in
+// lib/storageKeys.ts to avoid a circular import with lib/photoCard.ts.
+export { thumbnailKey, originalKey };

@@ -166,13 +166,17 @@ export const folderPhotosApi = {
     }),
 };
 
-// GET /api/collections/:id/unfiled-photos (backend addition - see
-// routes/collections.ts for the gap this closes: failed/duplicate photos
-// have folderId: null and are otherwise invisible to any folder listing).
+// GET /api/photos/unfiled (backend addition - see routes/photos.ts for the
+// gap this closes: failed/duplicate photos have folderId: null and are
+// otherwise invisible to any folder listing). User-scoped, NOT
+// collection-scoped, so it works even before the user has ever had a
+// collection created (bug fix, reports/2026-07-03_0731.md "New Failures"
+// [High] - a brand-new user whose very first photo fails/dedupes before any
+// collection exists had no way to reach it, since GET /api/collections
+// returned [] and the old collection-scoped
+// GET /api/collections/:id/unfiled-photos required a collection id that
+// didn't exist yet).
 export const unfiledPhotosApi = {
-  list: (collectionId: string, params: { limit: number; offset: number }): Promise<FolderPhotosResponse> =>
-    apiFetch(
-      `/api/collections/${collectionId}/unfiled-photos?limit=${params.limit}&offset=${params.offset}`,
-      { method: "GET" },
-    ),
+  list: (params: { limit: number; offset: number }): Promise<FolderPhotosResponse> =>
+    apiFetch(`/api/photos/unfiled?limit=${params.limit}&offset=${params.offset}`, { method: "GET" }),
 };
