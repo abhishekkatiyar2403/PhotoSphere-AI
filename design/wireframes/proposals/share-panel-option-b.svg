@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- U1 Option B: Dedicated /share page, two-column -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Share</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Page heading -->
+  <text x="24" y="80" font-size="16" fill="#222" font-weight="bold">Create a share</text>
+  <text x="24" y="98" font-size="11" fill="#8a90a0">Pick folders, set access, generate a link to send your client.</text>
+
+  <!-- Left column: folder picker -->
+  <rect x="24" y="112" width="380" height="380" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="44" y="140" font-size="11" fill="#8a90a0" font-weight="bold">FOLDERS TO SHARE</text>
+  <text x="300" y="140" font-size="10" fill="#1b3a9e">Select all</text>
+
+  <rect x="40" y="152" width="348" height="34" rx="4" fill="#e8eefc"/>
+  <rect x="52" y="161" width="16" height="16" rx="3" fill="#3057d5"/>
+  <text x="55" y="173" font-size="11" fill="#ffffff">✓</text>
+  <rect x="76" y="158" width="40" height="22" fill="#d7dbe4"/>
+  <text x="124" y="173" font-size="13" fill="#1b3a9e" font-weight="bold">Food</text>
+  <text x="360" y="173" font-size="11" fill="#1b3a9e">12</text>
+
+  <rect x="40" y="190" width="348" height="34" rx="4" fill="#e8eefc"/>
+  <rect x="52" y="199" width="16" height="16" rx="3" fill="#3057d5"/>
+  <text x="55" y="211" font-size="11" fill="#ffffff">✓</text>
+  <rect x="76" y="196" width="40" height="22" fill="#d7dbe4"/>
+  <text x="124" y="211" font-size="13" fill="#1b3a9e" font-weight="bold">Nature</text>
+  <text x="360" y="211" font-size="11" fill="#1b3a9e">8</text>
+
+  <rect x="40" y="228" width="348" height="34" rx="4" fill="#ffffff" stroke="#eef1f6"/>
+  <rect x="52" y="237" width="16" height="16" rx="3" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="76" y="234" width="40" height="22" fill="#d7dbe4"/>
+  <text x="124" y="249" font-size="13" fill="#333">People</text>
+  <text x="360" y="249" font-size="11" fill="#8a90a0">34</text>
+
+  <rect x="40" y="266" width="348" height="34" rx="4" fill="#ffffff" stroke="#eef1f6"/>
+  <rect x="52" y="275" width="16" height="16" rx="3" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="76" y="272" width="40" height="22" fill="#d7dbe4"/>
+  <text x="124" y="287" font-size="13" fill="#333">Animals</text>
+  <text x="360" y="287" font-size="11" fill="#8a90a0">5</text>
+
+  <rect x="40" y="304" width="348" height="34" rx="4" fill="#ffffff" stroke="#eef1f6"/>
+  <rect x="52" y="313" width="16" height="16" rx="3" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="76" y="310" width="40" height="22" fill="#f3e2e2"/>
+  <text x="124" y="325" font-size="13" fill="#9a5555">Uncategorized</text>
+  <text x="360" y="325" font-size="11" fill="#8a90a0">7</text>
+
+  <line x1="40" y1="352" x2="388" y2="352" stroke="#eef1f6"/>
+  <text x="44" y="375" font-size="12" fill="#1b3a9e" font-weight="bold">2 folders · 20 photos selected</text>
+
+  <!-- Right column: settings -->
+  <rect x="420" y="112" width="356" height="380" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="440" y="140" font-size="11" fill="#8a90a0" font-weight="bold">GUEST EMAIL</text>
+  <rect x="440" y="148" width="316" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="450" y="168" font-size="12" fill="#a0a6b5">client@example.com</text>
+
+  <text x="440" y="204" font-size="11" fill="#8a90a0" font-weight="bold">PERMISSION LEVEL</text>
+  <rect x="440" y="212" width="316" height="30" rx="4" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="450" y="232" font-size="12" fill="#1b3a9e">Download — view + download each photo ▾</text>
+  <text x="440" y="258" font-size="10" fill="#8a90a0">View only · Download · Download all</text>
+
+  <text x="440" y="288" font-size="11" fill="#8a90a0" font-weight="bold">LINK EXPIRES</text>
+  <rect x="440" y="296" width="150" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="450" y="316" font-size="12" fill="#333">In 7 days ▾</text>
+
+  <rect x="440" y="356" width="316" height="36" rx="5" fill="#3057d5"/>
+  <text x="530" y="380" font-size="13" fill="#ffffff" font-weight="bold">Generate invite link</text>
+
+  <rect x="440" y="404" width="316" height="66" rx="6" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="452" y="424" font-size="10" fill="#1b3a9e" font-weight="bold">SHAREABLE LINK</text>
+  <rect x="452" y="432" width="228" height="26" rx="4" fill="#ffffff" stroke="#c3d1f5"/>
+  <text x="460" y="450" font-size="11" fill="#1b3a9e">https://…/g/xK92mPqL7</text>
+  <rect x="688" y="432" width="56" height="26" rx="4" fill="#3057d5"/>
+  <text x="700" y="450" font-size="11" fill="#ffffff">Copy</text>
+
+  <!-- Footnote -->
+  <text x="24" y="560" font-size="10" fill="#8a90a0">U1 Option B — a dedicated /share route, two-column: scrollable folder picker on the left, invite settings + generated</text>
+  <text x="24" y="574" font-size="10" fill="#8a90a0">link on the right. Roomiest for many folders and clearest permission labels; costs a full navigation away from browsing.</text>
+</svg>

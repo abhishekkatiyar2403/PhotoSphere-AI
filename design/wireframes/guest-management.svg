@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- U2 Option C: Single prioritized feed -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Guests</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <text x="24" y="78" font-size="15" fill="#222" font-weight="bold">Guest activity</text>
+  <rect x="660" y="62" width="116" height="26" rx="4" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="676" y="79" font-size="11" fill="#1b3a9e" font-weight="bold">+ Share folders</text>
+
+  <!-- Attention banner strip -->
+  <rect x="24" y="94" width="752" height="26" rx="6" fill="#f3e2e2"/>
+  <text x="40" y="111" font-size="11" fill="#9a5555" font-weight="bold">2 requests need your approval — enter the code you received to let each guest in.</text>
+
+  <!-- Pending request row 1 (top priority, expanded with OTP) -->
+  <rect x="24" y="128" width="752" height="88" rx="10" fill="#ffffff" stroke="#e2b6b6"/>
+  <rect x="24" y="128" width="6" height="88" rx="3" fill="#c46b6b"/>
+  <text x="44" y="152" font-size="13" fill="#222" font-weight="bold">client@example.com</text>
+  <text x="44" y="170" font-size="10" fill="#8a90a0">wants Food, Nature (download) · IP 203.0.113.9 · Chrome/macOS · 2 min ago</text>
+  <text x="44" y="196" font-size="11" fill="#333">Code:</text>
+  <rect x="86" y="182" width="150" height="26" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="96" y="200" font-size="12" fill="#a0a6b5">6-digit code</text>
+  <rect x="248" y="182" width="86" height="26" rx="5" fill="#3057d5"/>
+  <text x="266" y="200" font-size="12" fill="#ffffff" font-weight="bold">Approve</text>
+  <rect x="344" y="182" width="70" height="26" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="362" y="200" font-size="12" fill="#9a5555">Deny</text>
+  <text x="620" y="200" font-size="10" fill="#8a90a0">0/3 · expires 4:12</text>
+
+  <!-- Pending request row 2 -->
+  <rect x="24" y="224" width="752" height="66" rx="10" fill="#ffffff" stroke="#e2b6b6"/>
+  <rect x="24" y="224" width="6" height="66" rx="3" fill="#c46b6b"/>
+  <text x="44" y="248" font-size="13" fill="#222" font-weight="bold">studio@bride.co</text>
+  <text x="44" y="266" font-size="10" fill="#8a90a0">wants People (view) · IP 198.51.100.4 · Safari/iOS · 9 min ago</text>
+  <rect x="590" y="246" width="86" height="26" rx="5" fill="#3057d5"/>
+  <text x="602" y="264" font-size="12" fill="#ffffff" font-weight="bold">Enter OTP</text>
+  <rect x="686" y="246" width="70" height="26" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="704" y="264" font-size="12" fill="#9a5555">Deny</text>
+
+  <!-- Divider into roster -->
+  <text x="24" y="322" font-size="12" fill="#8a90a0" font-weight="bold">ACTIVE &amp; PAST GUESTS</text>
+  <line x1="180" y1="318" x2="776" y2="318" stroke="#eef1f6"/>
+
+  <!-- Roster row (active) -->
+  <rect x="24" y="332" width="752" height="46" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="24" y="332" width="6" height="46" rx="3" fill="#3d9a5b"/>
+  <text x="44" y="360" font-size="13" fill="#222" font-weight="bold">client@example.com</text>
+  <text x="300" y="360" font-size="10" fill="#8a90a0">Food, Nature · download · last seen 5 min ago</text>
+  <rect x="640" y="344" width="54" height="22" rx="9" fill="#e3f2e8"/>
+  <text x="650" y="359" font-size="10" fill="#3d7a52">Active</text>
+  <rect x="704" y="344" width="60" height="22" rx="4" fill="#ffffff" stroke="#e2b6b6"/>
+  <text x="714" y="359" font-size="11" fill="#9a5555">Revoke</text>
+
+  <!-- Roster row (pending invite) -->
+  <rect x="24" y="386" width="752" height="46" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="24" y="386" width="6" height="46" rx="3" fill="#c7b56b"/>
+  <text x="44" y="414" font-size="13" fill="#222" font-weight="bold">mom@family.net</text>
+  <text x="300" y="414" font-size="10" fill="#8a90a0">People · view · invite sent, not yet opened</text>
+  <rect x="640" y="398" width="66" height="22" rx="9" fill="#faf3dc"/>
+  <text x="650" y="413" font-size="10" fill="#8a7a3a">Pending</text>
+  <rect x="704" y="398" width="60" height="22" rx="4" fill="#ffffff" stroke="#e2b6b6"/>
+  <text x="714" y="413" font-size="11" fill="#9a5555">Revoke</text>
+
+  <!-- Roster row (revoked) -->
+  <rect x="24" y="440" width="752" height="46" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="24" y="440" width="6" height="46" rx="3" fill="#c2c8d4"/>
+  <text x="44" y="468" font-size="13" fill="#7a808e" font-weight="bold">old-client@gmail.com</text>
+  <text x="300" y="468" font-size="10" fill="#8a90a0">Nature · download · access ended yesterday</text>
+  <rect x="640" y="452" width="66" height="22" rx="9" fill="#eef1f6"/>
+  <text x="650" y="467" font-size="10" fill="#8a90a0">Revoked</text>
+
+  <!-- Footnote -->
+  <text x="24" y="560" font-size="10" fill="#8a90a0">U2 Option C — a single prioritized feed: pending requests (needing action) always float to the top with an attention</text>
+  <text x="24" y="574" font-size="10" fill="#8a90a0">banner, the guest roster flows below in the same stream. Zero context-switching; the two concerns share vertical space.</text>
+</svg>

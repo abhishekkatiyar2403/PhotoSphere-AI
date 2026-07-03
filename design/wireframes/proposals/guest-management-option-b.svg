@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- U2 Option B: Tabbed single-column -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Guests</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Tabs -->
+  <rect x="0" y="48" width="800" height="40" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="24" y="76" width="150" height="12" fill="#3057d5"/>
+  <text x="40" y="72" font-size="13" fill="#1b3a9e" font-weight="bold">Requests</text>
+  <rect x="128" y="58" width="22" height="18" rx="9" fill="#f3e2e2"/>
+  <text x="135" y="71" font-size="11" fill="#9a5555" font-weight="bold">2</text>
+  <text x="200" y="72" font-size="13" fill="#8a90a0">Guests (5)</text>
+  <rect x="700" y="56" width="80" height="24" rx="4" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="710" y="72" font-size="11" fill="#1b3a9e">+ Share</text>
+
+  <!-- Active tab: Requests, full-width cards -->
+  <text x="24" y="118" font-size="12" fill="#8a90a0">2 people are waiting for you to approve their access.</text>
+
+  <!-- Request card 1 -->
+  <rect x="24" y="130" width="752" height="120" rx="10" fill="#ffffff" stroke="#e2b6b6"/>
+  <text x="44" y="158" font-size="14" fill="#222" font-weight="bold">client@example.com</text>
+  <rect x="300" y="144" width="110" height="18" rx="9" fill="#f3e2e2"/>
+  <text x="312" y="157" font-size="10" fill="#9a5555" font-weight="bold">Awaiting OTP</text>
+  <text x="44" y="180" font-size="11" fill="#8a90a0">IP 203.0.113.9 · Chrome on macOS · requested 2 min ago · wants Food, Nature (download)</text>
+  <text x="44" y="204" font-size="11" fill="#333">Enter the 6-digit code you received:</text>
+  <rect x="44" y="212" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="74" y="212" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="104" y="212" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="134" y="212" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="164" y="212" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="194" y="212" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="240" y="212" width="100" height="30" rx="5" fill="#3057d5"/>
+  <text x="266" y="232" font-size="12" fill="#ffffff" font-weight="bold">Approve</text>
+  <rect x="352" y="212" width="80" height="30" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="374" y="232" font-size="12" fill="#9a5555">Deny</text>
+  <text x="620" y="232" font-size="10" fill="#8a90a0">Attempts 0/3 · expires 4:12</text>
+
+  <!-- Request card 2 -->
+  <rect x="24" y="262" width="752" height="120" rx="10" fill="#ffffff" stroke="#e2b6b6"/>
+  <text x="44" y="290" font-size="14" fill="#222" font-weight="bold">studio@bride.co</text>
+  <rect x="300" y="276" width="110" height="18" rx="9" fill="#f3e2e2"/>
+  <text x="312" y="289" font-size="10" fill="#9a5555" font-weight="bold">Awaiting OTP</text>
+  <text x="44" y="312" font-size="11" fill="#8a90a0">IP 198.51.100.4 · Safari on iOS · requested 9 min ago · wants People (view)</text>
+  <text x="44" y="336" font-size="11" fill="#333">Enter the 6-digit code you received:</text>
+  <rect x="44" y="344" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="74" y="344" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="104" y="344" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="134" y="344" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="164" y="344" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="194" y="344" width="26" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <rect x="240" y="344" width="100" height="30" rx="5" fill="#3057d5"/>
+  <text x="266" y="364" font-size="12" fill="#ffffff" font-weight="bold">Approve</text>
+  <rect x="352" y="344" width="80" height="30" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="374" y="364" font-size="12" fill="#9a5555">Deny</text>
+
+  <!-- Inactive Guests tab hint -->
+  <line x1="24" y1="404" x2="776" y2="404" stroke="#eef1f6"/>
+  <text x="24" y="428" font-size="11" fill="#c2c8d4">Switch to the "Guests" tab for the full roster (Active / Pending / Revoked) with one-tap Revoke.</text>
+
+  <!-- Footnote -->
+  <text x="24" y="560" font-size="10" fill="#8a90a0">U2 Option B — one column, two tabs: "Requests" (the time-sensitive approval queue, full-width so IP/device + OTP</text>
+  <text x="24" y="574" font-size="10" fill="#8a90a0">entry are roomy) and "Guests" (the roster with Revoke). Focused, mobile-friendly; an extra click to switch context.</text>
+</svg>

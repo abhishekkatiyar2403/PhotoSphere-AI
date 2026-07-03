@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- U1 Option C: Inline right side-panel drawer, wizard steps -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Browse</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Page still visible/usable behind (browse grid) -->
+  <rect x="0" y="48" width="180" height="552" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="14" y="76" font-size="11" fill="#8a90a0" font-weight="bold">MY PHOTOS</text>
+  <text x="16" y="104" font-size="12" fill="#333">Food</text>
+  <text x="16" y="128" font-size="12" fill="#333">Nature</text>
+  <text x="16" y="152" font-size="12" fill="#333">People</text>
+  <rect x="200" y="72" width="110" height="80" fill="#d7dbe4"/>
+  <rect x="322" y="72" width="110" height="80" fill="#d7dbe4"/>
+  <text x="200" y="176" font-size="11" fill="#8a90a0">(browse grid stays live behind the drawer)</text>
+
+  <!-- Drawer -->
+  <rect x="460" y="48" width="340" height="552" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="480" y="80" font-size="15" fill="#222" font-weight="bold">Share</text>
+  <text x="768" y="80" font-size="15" fill="#8a90a0">×</text>
+  <line x1="460" y1="94" x2="800" y2="94" stroke="#eef1f6"/>
+
+  <!-- Step indicator -->
+  <rect x="480" y="108" width="20" height="20" rx="10" fill="#3057d5"/>
+  <text x="486" y="122" font-size="11" fill="#ffffff">1</text>
+  <text x="506" y="122" font-size="11" fill="#1b3a9e" font-weight="bold">Folders</text>
+  <line x1="562" y1="118" x2="600" y2="118" stroke="#c3d1f5"/>
+  <rect x="606" y="108" width="20" height="20" rx="10" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="612" y="122" font-size="11" fill="#1b3a9e">2</text>
+  <text x="632" y="122" font-size="11" fill="#8a90a0">Access</text>
+  <line x1="686" y1="118" x2="710" y2="118" stroke="#dde1e8"/>
+  <rect x="716" y="108" width="20" height="20" rx="10" fill="#eef1f6" stroke="#dde1e8"/>
+  <text x="722" y="122" font-size="11" fill="#8a90a0">3</text>
+  <text x="742" y="122" font-size="11" fill="#8a90a0">Link</text>
+
+  <!-- Step 1 content: folder multi-select -->
+  <text x="480" y="156" font-size="12" fill="#222" font-weight="bold">Step 1 — Which folders?</text>
+  <rect x="480" y="168" width="300" height="34" rx="4" fill="#e8eefc"/>
+  <rect x="492" y="177" width="16" height="16" rx="3" fill="#3057d5"/>
+  <text x="495" y="189" font-size="11" fill="#ffffff">✓</text>
+  <text x="518" y="189" font-size="13" fill="#1b3a9e" font-weight="bold">Food</text>
+  <text x="756" y="189" font-size="11" fill="#1b3a9e">12</text>
+
+  <rect x="480" y="206" width="300" height="34" rx="4" fill="#e8eefc"/>
+  <rect x="492" y="215" width="16" height="16" rx="3" fill="#3057d5"/>
+  <text x="495" y="227" font-size="11" fill="#ffffff">✓</text>
+  <text x="518" y="227" font-size="13" fill="#1b3a9e" font-weight="bold">Nature</text>
+  <text x="756" y="227" font-size="11" fill="#1b3a9e">8</text>
+
+  <rect x="480" y="244" width="300" height="34" rx="4" fill="#ffffff" stroke="#eef1f6"/>
+  <rect x="492" y="253" width="16" height="16" rx="3" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="518" y="265" font-size="13" fill="#333">People</text>
+  <text x="756" y="265" font-size="11" fill="#8a90a0">34</text>
+
+  <rect x="480" y="282" width="300" height="34" rx="4" fill="#ffffff" stroke="#eef1f6"/>
+  <rect x="492" y="291" width="16" height="16" rx="3" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="518" y="303" font-size="13" fill="#333">Animals</text>
+  <text x="756" y="303" font-size="11" fill="#8a90a0">5</text>
+
+  <text x="480" y="340" font-size="11" fill="#1b3a9e">2 selected</text>
+
+  <!-- Greyed preview of later steps -->
+  <line x1="480" y1="356" x2="780" y2="356" stroke="#eef1f6"/>
+  <text x="480" y="380" font-size="11" fill="#c2c8d4">Step 2 — guest email, permission, expiry</text>
+  <text x="480" y="400" font-size="11" fill="#c2c8d4">Step 3 — copy the generated invite link</text>
+
+  <!-- Wizard nav -->
+  <rect x="480" y="536" width="90" height="34" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="506" y="558" font-size="12" fill="#8a90a0">Back</text>
+  <rect x="690" y="536" width="90" height="34" rx="5" fill="#3057d5"/>
+  <text x="714" y="558" font-size="12" fill="#ffffff" font-weight="bold">Next →</text>
+
+  <!-- Footnote -->
+  <text x="24" y="560" font-size="10" fill="#8a90a0">U1 Option C — a right-hand drawer that slides in over /browse or /organize (page stays live behind), guiding the</text>
+  <text x="24" y="574" font-size="10" fill="#8a90a0">owner through 3 steps: folders → access → link. Most hand-holding; more clicks; drawer can feel narrow for pickers.</text>
+</svg>
