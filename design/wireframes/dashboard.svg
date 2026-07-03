@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- Option B: Storage-meter hero + folder shortcut tiles -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Dashboard</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Hero: storage meter -->
+  <rect x="24" y="72" width="752" height="132" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="44" y="100" font-size="13" fill="#8a90a0" font-weight="bold">STORAGE</text>
+  <text x="44" y="130" font-size="26" fill="#222" font-weight="bold">3.1 GB <tspan font-size="15" fill="#8a90a0" font-weight="normal">of 5.0 GB used</tspan></text>
+  <!-- meter track -->
+  <rect x="44" y="146" width="712" height="16" rx="8" fill="#eef1f6"/>
+  <!-- meter fill (62%) -->
+  <rect x="44" y="146" width="441" height="16" rx="8" fill="#3057d5"/>
+  <text x="44" y="182" font-size="11" fill="#8a90a0">62% used · storage.usedPercent</text>
+  <text x="620" y="182" font-size="11" fill="#8a90a0">1,248 photos total</text>
+
+  <!-- Section header -->
+  <text x="24" y="232" font-size="15" fill="#222" font-weight="bold">Jump to a folder</text>
+  <text x="150" y="232" font-size="11" fill="#8a90a0">(from My Photos)</text>
+
+  <!-- Folder shortcut tiles -->
+  <rect x="24" y="248" width="140" height="96" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="36" y="260" width="116" height="52" fill="#d7dbe4"/>
+  <text x="36" y="326" font-size="12" fill="#333" font-weight="bold">Food</text>
+  <text x="36" y="340" font-size="10" fill="#8a90a0">12 photos</text>
+
+  <rect x="176" y="248" width="140" height="96" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="188" y="260" width="116" height="52" fill="#d7dbe4"/>
+  <text x="188" y="326" font-size="12" fill="#333" font-weight="bold">People</text>
+  <text x="188" y="340" font-size="10" fill="#8a90a0">34 photos</text>
+
+  <rect x="328" y="248" width="140" height="96" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="340" y="260" width="116" height="52" fill="#d7dbe4"/>
+  <text x="340" y="326" font-size="12" fill="#333" font-weight="bold">Nature</text>
+  <text x="340" y="340" font-size="10" fill="#8a90a0">8 photos</text>
+
+  <rect x="480" y="248" width="140" height="96" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="492" y="260" width="116" height="52" fill="#f3e2e2"/>
+  <text x="492" y="326" font-size="12" fill="#9a5555" font-weight="bold">Unfiled</text>
+  <text x="492" y="340" font-size="10" fill="#8a90a0">2 need attention</text>
+
+  <rect x="632" y="248" width="144" height="96" rx="8" fill="#f2f4f8" stroke="#b9c0cf" stroke-dasharray="4,3"/>
+  <text x="652" y="300" font-size="12" fill="#5a6070">View all folders</text>
+  <text x="656" y="318" font-size="18" fill="#5a6070">→</text>
+
+  <!-- Secondary row: totals recap -->
+  <text x="24" y="388" font-size="15" fill="#222" font-weight="bold">At a glance</text>
+  <text x="24" y="412" font-size="12" fill="#333">9 folders · 1 collection · 1,248 photos total</text>
+
+  <!-- Footnote -->
+  <text x="24" y="560" font-size="10" fill="#8a90a0">Option B — storage gets the most visual weight (the number people care about most), folder tiles</text>
+  <text x="24" y="574" font-size="10" fill="#8a90a0">are one-click shortcuts into /browse. Unfiled tile stands out when it has items needing attention.</text>
+</svg>

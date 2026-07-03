@@ -201,3 +201,33 @@ export const unfiledPhotosApi = {
   list: (params: { limit: number; offset: number }): Promise<FolderPhotosResponse> =>
     apiFetch(`/api/photos/unfiled?limit=${params.limit}&offset=${params.offset}`, { method: "GET" }),
 };
+
+// Dashboard stats (GET /api/dashboard, backend/src/routes/dashboard.ts).
+// storage byte values are returned as STRINGS deliberately - BigInt is not
+// JSON-serializable, so the server stringifies them; the client parses them
+// to Number for human-readable formatting (see the dashboard page's
+// formatBytes). usedPercent is a pre-computed float 0-1 (server does the
+// BigInt->float math so the client never touches BigInt division).
+export type DashboardStats = {
+  storage: {
+    usedBytes: string;
+    limitBytes: string;
+    usedPercent: number;
+  };
+  totals: {
+    photoCount: number;
+    folderCount: number;
+    collectionCount: number;
+  };
+  collections: {
+    id: string;
+    name: string;
+    isDefault: boolean;
+    folderCount: number;
+    photoCount: number;
+  }[];
+};
+
+export const dashboardApi = {
+  get: (): Promise<DashboardStats> => apiFetch("/api/dashboard", { method: "GET" }),
+};

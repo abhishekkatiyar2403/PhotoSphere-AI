@@ -14,8 +14,8 @@
 // folder-creation form) - just fetch + paginate + render, plus opening the
 // shared PhotoViewer on thumbnail click.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
   authApi,
@@ -44,8 +44,25 @@ function isAuthError(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401;
 }
 
+// useSearchParams() must sit inside a Suspense boundary in the Next 14 App
+// Router (it opts the subtree into client-side rendering), so the page shell
+// wraps the real component in <Suspense>.
 export default function BrowsePage() {
+  return (
+    <Suspense fallback={null}>
+      <BrowsePageInner />
+    </Suspense>
+  );
+}
+
+function BrowsePageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Optional deep-link target from the Dashboard's folder tiles
+  // (/browse?folder=<id>, or ?folder=__unfiled__ for the Unfiled bucket).
+  // Applied once, after the initial folder/collection load resolves - see the
+  // initial-load effect. Absent -> default to the first folder as before.
+  const initialFolderId = searchParams.get("folder");
   const [checking, setChecking] = useState(true);
 
   const [collectionId, setCollectionId] = useState<string | null>(null);
@@ -116,9 +133,24 @@ export default function BrowsePage() {
         setCollectionId(defaultCollection?.id ?? null);
         const loaded = await loadFolders(defaultCollection?.id ?? null);
         if (cancelled) return;
-        if (loaded.length > 0) {
-          setSelectedFolderId((prev) => prev ?? loaded[0].id);
-        }
+        // Honor a ?folder=<id> deep-link (from the Dashboard tiles) when it
+        // resolves to something real: a folder present in the loaded list,
+        // or the Unfiled sentinel (which isn't a real folder id, so it's
+        // matched by value, not against `loaded`). Otherwise fall back to
+        // the first folder, as before. Only sets the initial selection
+        // (?? prev) - never overrides a user's later click.
+        const deepLinkTarget =
+          initialFolderId === UNFILED_FOLDER_ID
+            ? UNFILED_FOLDER_ID
+            : initialFolderId && loaded.some((f) => f.id === initialFolderId)
+              ? initialFolderId
+              : null;
+        setSelectedFolderId((prev) => {
+          if (prev) return prev;
+          if (deepLinkTarget) return deepLinkTarget;
+          if (loaded.length > 0) return loaded[0].id;
+          return prev;
+        });
       } catch (err) {
         if (cancelled) return;
         if (isAuthError(err)) {
@@ -133,7 +165,7 @@ export default function BrowsePage() {
     return () => {
       cancelled = true;
     };
-  }, [checking, loadFolders, router]);
+  }, [checking, loadFolders, router, initialFolderId]);
 
   const loadFolderPhotos = useCallback(
     async (folderId: string, pageOffset: number) => {
