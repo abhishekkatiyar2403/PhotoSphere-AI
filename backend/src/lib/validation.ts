@@ -36,3 +36,31 @@ export const folderPhotosQuerySchema = z.object({
 export type CreateFolderInput = z.infer<typeof createFolderSchema>;
 export type MovePhotoInput = z.infer<typeof movePhotoSchema>;
 export type FolderPhotosQuery = z.infer<typeof folderPhotosQuerySchema>;
+
+// --- specs/guest-access-otp.md §5 ---
+
+export const PERMISSION_LEVELS = ["view", "download", "download_all"] as const;
+
+// POST /api/guests — owner creates a share (folder-scoped, decision G3).
+export const createGuestSchema = z.object({
+  guestEmail: z.string().trim().toLowerCase().email("Invalid email format"),
+  guestName: z.string().trim().min(1).max(255).optional(),
+  folderIds: z.array(z.string().uuid("folderId must be a UUID")).min(1, "At least one folder is required"),
+  permissionLevel: z.enum(PERMISSION_LEVELS),
+  // Optional grant expiry in days; capped at a year to keep the value sane.
+  expiresInDays: z.coerce.number().int().min(1).max(365).optional(),
+});
+
+// GET /api/access-requests — optional status filter (default 'pending').
+export const accessRequestsQuerySchema = z.object({
+  status: z.enum(["pending", "approved", "denied", "expired", "all"]).default("pending"),
+});
+
+// POST /api/access-requests/:id/approve — owner submits the OTP.
+export const approveAccessRequestSchema = z.object({
+  otp: z.string().trim().regex(/^\d{6}$/, "OTP must be a 6-digit code"),
+});
+
+export type CreateGuestInput = z.infer<typeof createGuestSchema>;
+export type AccessRequestsQuery = z.infer<typeof accessRequestsQuerySchema>;
+export type ApproveAccessRequestInput = z.infer<typeof approveAccessRequestSchema>;

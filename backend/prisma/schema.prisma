@@ -26,6 +26,9 @@ model User {
   sessions    Session[]
   photos      Photo[]
   collections Collection[]
+  // Back-relation only (specs/guest-access-otp.md §1). No physical column
+  // added to `users` — the FK lives on guest_users.created_by.
+  guestsInvited GuestUser[] @relation("GuestsInvited")
 
   @@map("users")
 }
@@ -64,6 +67,9 @@ model Folder {
 
   collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   photos     Photo[]
+  // Back-relation only (specs/guest-access-otp.md §1). The FK lives on
+  // folder_permissions.folder_id; no physical column added to `folders`.
+  permissions FolderPermission[]
 
   @@unique([collectionId, name]) // race-safe find-or-create under worker concurrency 2
   @@index([collectionId])
@@ -156,4 +162,127 @@ model ProcessingJob {
 
   @@index([photoId])
   @@map("processing_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Guest Access + OTP (specs/guest-access-otp.md §1, roadmap §6). All five
+// models below are additive — no existing table altered. Geo columns
+// (location_city/location_country) deliberately omitted per decision G8;
+// audit_log deferred to Week 11-12 per G9.
+// ---------------------------------------------------------------------------
+
+// A lightweight, account-less recipient of a share. Created by an owner via
+// POST /api/guests; never promoted to `users` (Non-goal). `email` is a human
+// label (and the addressee a real provider would use post-swap), NOT an
+// authenticated identity — the OTP goes to the OWNER, not the guest.
+model GuestUser {
+  id        String   @id @default(uuid())
+  email     String
+  name      String?
+  createdBy String   @map("created_by") // the owner (users.id) who invited them
+  createdAt DateTime @default(now()) @map("created_at")
+
+  owner             User               @relation("GuestsInvited", fields: [createdBy], references: [id], onDelete: Cascade)
+  inviteTokens      InviteToken[]
+  folderPermissions FolderPermission[]
+  accessRequests    AccessRequest[]
+  guestSessions     GuestSession[]
+
+  @@index([createdBy])
+  @@map("guest_users")
+}
+
+// The invite link's payload. Only the SHA-256 hash of the raw token is
+// persisted — the raw token exists only in the shareable link (decision G4).
+// max_uses defaults to 1 (decision G6): one named guest, no link-forwarding.
+model InviteToken {
+  id           String    @id @default(uuid())
+  tokenHash    String    @unique @map("token_hash") // SHA-256 of the raw token (raw only ever in the link)
+  guestUserId  String    @map("guest_user_id")
+  collectionId String?   @map("collection_id") // informational context; real scope is folder_permissions (G3)
+  createdBy    String    @map("created_by")
+  maxUses      Int?      @map("max_uses") // null = unlimited (G6 default = 1)
+  useCount     Int       @default(0) @map("use_count")
+  expiresAt    DateTime? @map("expires_at")
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  guestUser      GuestUser       @relation(fields: [guestUserId], references: [id], onDelete: Cascade)
+  accessRequests AccessRequest[]
+
+  @@index([guestUserId])
+  @@map("invite_tokens")
+}
+
+// The real access scope (decision G3 = folder). One row per shared folder.
+// Live when revokedAt is null AND (expiresAt null OR future) —
+// getPermittedFolderIds() is the single choke point that enforces this.
+model FolderPermission {
+  id              String    @id @default(uuid())
+  guestUserId     String    @map("guest_user_id")
+  folderId        String    @map("folder_id")
+  permissionLevel String    @map("permission_level") // 'view' | 'download' | 'download_all'
+  expiresAt       DateTime? @map("expires_at")
+  grantedBy       String    @map("granted_by") // users.id
+  revokedAt       DateTime? @map("revoked_at") // null = active
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  guestUser GuestUser @relation(fields: [guestUserId], references: [id], onDelete: Cascade)
+  folder    Folder    @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([guestUserId, folderId])
+  @@index([guestUserId])
+  @@map("folder_permissions")
+}
+
+// One per guest attempt to enter via an invite link. Carries the OTP gate
+// state: SHA-256 hash only (plaintext never persisted), 5-min TTL, single-use,
+// 3 wrong owner-submitted attempts -> auto-deny (roadmap §12 Layer 5).
+model AccessRequest {
+  id            String    @id @default(uuid())
+  inviteTokenId String    @map("invite_token_id")
+  guestUserId   String    @map("guest_user_id")
+  ipAddress     String?   @map("ip_address")
+  deviceInfo    Json?     @map("device_info") // user-agent etc. (no geo — decision G8)
+  status        String    @default("pending") // pending|approved|denied|expired
+  otpHash       String?   @map("otp_hash") // SHA-256 of the 6-digit OTP
+  otpExpiresAt  DateTime? @map("otp_expires_at")
+  otpAttempts   Int       @default(0) @map("otp_attempts") // 3 wrong -> auto-deny
+  // Decision G7 handoff: the request flips to `approved` at owner-approval;
+  // the guest session is minted exactly once by the guest's own status poll
+  // (the poll sets the httpOnly guest cookie). This timestamp is the
+  // claim-once latch — set atomically on the first poll that observes
+  // `approved`, so a concurrent double-poll can't mint two sessions and the
+  // raw guest token is never persisted anywhere (only its own SHA-256 hash in
+  // guest_sessions, mirroring owner sessions).
+  sessionClaimedAt DateTime? @map("session_claimed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  resolvedAt    DateTime? @map("resolved_at")
+  resolvedBy    String?   @map("resolved_by") // users.id of the approving/denying owner
+
+  inviteToken InviteToken @relation(fields: [inviteTokenId], references: [id], onDelete: Cascade)
+  guestUser   GuestUser   @relation(fields: [guestUserId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@map("access_requests")
+}
+
+// Opaque, revocable guest session — mirrors `sessions` exactly (SHA-256 hash
+// only, never a JWT). expires_at added vs roadmap §6 (decision G2), capped at
+// min(GUEST_SESSION_TTL_HOURS, earliest live permission expiry).
+model GuestSession {
+  id          String    @id @default(uuid())
+  guestUserId String    @map("guest_user_id")
+  tokenHash   String    @unique @map("token_hash") // SHA-256, mirrors Session
+  ipAddress   String?   @map("ip_address")
+  userAgent   String?   @map("user_agent")
+  expiresAt   DateTime  @map("expires_at")
+  lastUsedAt  DateTime  @default(now()) @map("last_used_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  guestUser GuestUser @relation(fields: [guestUserId], references: [id], onDelete: Cascade)
+
+  @@index([guestUserId])
+  @@map("guest_sessions")
 }
