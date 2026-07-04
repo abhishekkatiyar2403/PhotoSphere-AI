@@ -231,3 +231,130 @@ export type DashboardStats = {
 export const dashboardApi = {
   get: (): Promise<DashboardStats> => apiFetch("/api/dashboard", { method: "GET" }),
 };
+
+// --- Guest Access + OTP (specs/guest-access-otp.md) ---
+// Two client "contexts" on the same apiFetch/ApiError/credentials:"include"
+// conventions as everything above: an OWNER context (guestsApi,
+// accessRequestsApi - requireAuth-gated, same cookie as authApi) and a GUEST
+// context (invitesApi, guestPortalApi - requireGuest-gated, a distinct
+// httpOnly cookie the browser stores automatically once
+// GET /api/invites/requests/:id/status sets it - see Day3.md's G7 note).
+
+export type PermissionLevel = "view" | "download" | "download_all";
+
+// Owner: create a share (POST /api/guests).
+export type CreateGuestInput = {
+  guestEmail: string;
+  guestName?: string;
+  folderIds: string[];
+  permissionLevel: PermissionLevel;
+  expiresInDays?: number;
+};
+
+export type CreateGuestResponse = {
+  guestId: string;
+  inviteToken: string;
+  inviteUrl: string;
+  expiresAt: string | null;
+};
+
+export type GuestListItem = {
+  id: string;
+  email: string;
+  name: string | null;
+  status: "pending" | "active" | "revoked" | "expired";
+  permissionLevel: PermissionLevel | null;
+  folders: { id: string; name: string }[];
+  lastAccessAt: string | null;
+  createdAt: string;
+};
+
+export const guestsApi = {
+  create: (input: CreateGuestInput): Promise<CreateGuestResponse> =>
+    apiFetch("/api/guests", { method: "POST", body: JSON.stringify(input) }),
+  list: (): Promise<{ guests: GuestListItem[] }> => apiFetch("/api/guests", { method: "GET" }),
+  revoke: (guestId: string): Promise<{ ok: true }> =>
+    apiFetch(`/api/guests/${guestId}`, { method: "DELETE" }),
+};
+
+// Owner: the OTP-approval queue (GET/POST /api/access-requests).
+export type AccessRequestStatus = "pending" | "approved" | "denied" | "expired";
+
+export type AccessRequestItem = {
+  id: string;
+  status: AccessRequestStatus;
+  guest: { id: string; email: string; name: string | null };
+  ipAddress: string | null;
+  deviceInfo: { userAgent: string | null } | null;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+export const accessRequestsApi = {
+  list: (status: AccessRequestStatus | "all" = "pending"): Promise<{ requests: AccessRequestItem[] }> =>
+    apiFetch(`/api/access-requests?status=${status}`, { method: "GET" }),
+  approve: (requestId: string, otp: string): Promise<{ status: "approved" }> =>
+    apiFetch(`/api/access-requests/${requestId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ otp }),
+    }),
+  deny: (requestId: string): Promise<{ status: "denied" }> =>
+    apiFetch(`/api/access-requests/${requestId}/deny`, { method: "POST" }),
+};
+
+// Guest (public, unauthenticated token entry - POST /api/invites/:token/request
+// and the status poll). credentials:"include" here is load-bearing: it's how
+// the browser both sends and (on the status poll, once approved) STORES the
+// httpOnly guest-session cookie the backend sets directly on this response -
+// see Day3.md's G7 handoff note. No Authorization header, no raw token ever
+// held in JS - the cookie round-trips invisibly to the caller.
+export type InviteRequestResponse =
+  | { requestId: string; status: "pending" }
+  | { status: "already_approved" };
+
+export type InviteStatusResponse = { status: AccessRequestStatus | "already_approved" };
+
+export const invitesApi = {
+  request: (token: string): Promise<InviteRequestResponse> =>
+    apiFetch(`/api/invites/${token}/request`, { method: "POST" }),
+  status: (requestId: string): Promise<InviteStatusResponse> =>
+    apiFetch(`/api/invites/requests/${requestId}/status`, { method: "GET" }),
+};
+
+// Guest portal (guest-session cookie required - GET /api/guest/*).
+export type GuestFolder = {
+  id: string;
+  name: string;
+  photoCount: number;
+  permissionLevel: PermissionLevel;
+};
+
+export type GuestPhotoDetail = {
+  id: string;
+  originalFilename: string;
+  original: { url: string; expiresInSeconds: number };
+  thumbnails: Record<string, string>;
+  exif: {
+    takenAt: string | null;
+    gpsLat: number | null;
+    gpsLng: number | null;
+    cameraMake: string | null;
+    cameraModel: string | null;
+  };
+  folderId: string | null;
+};
+
+export const guestPortalApi = {
+  folders: (): Promise<{ folders: GuestFolder[] }> => apiFetch("/api/guest/folders", { method: "GET" }),
+  folderPhotos: (
+    folderId: string,
+    params: { limit: number; offset: number },
+  ): Promise<FolderPhotosResponse> =>
+    apiFetch(`/api/guest/folders/${folderId}/photos?limit=${params.limit}&offset=${params.offset}`, {
+      method: "GET",
+    }),
+  photo: (photoId: string): Promise<GuestPhotoDetail> =>
+    apiFetch(`/api/guest/photos/${photoId}`, { method: "GET" }),
+  download: (photoId: string): Promise<{ download: { url: string; expiresInSeconds: number } }> =>
+    apiFetch(`/api/guest/photos/${photoId}/download`, { method: "GET" }),
+};

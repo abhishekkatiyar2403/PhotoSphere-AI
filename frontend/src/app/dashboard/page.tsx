@@ -146,6 +146,9 @@ export default function DashboardPage() {
       <div className="organize-topbar">
         <h1>PhotoSphere AI — Dashboard</h1>
         <div className="dashboard-topbar-right">
+          <Link href="/guests" className="dashboard-guests-link" data-testid="dashboard-guests-link">
+            Guests
+          </Link>
           <span>{user.name}</span>
           <button type="button" className="dashboard-logout" onClick={handleLogout}>
             Log out
