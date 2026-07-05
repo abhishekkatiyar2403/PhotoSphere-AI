@@ -4,7 +4,7 @@
 **Spec:** `specs/audit-and-polish.md` (Part A + Part B P1/P2/P3, on the AP1–AP10 recommended defaults)
 **Commits:**
 - `7fd5c15` — **Part A (audit-log backend) + P1 (Helmet)**. Already committed and Tester-adjacent (backend suite 85/85, verified).
-- `b8c0ad1` — **P2 (rate-limiter coverage audit) + P3 (empty/error/loading-state sweep) + this MR draft.** Both P2 and P3 resolved to **zero code changes** (see below); the enumeration table and per-page sweep findings are the deliverable, plus this draft.
+- `f1ce08d` — **P2 (rate-limiter coverage audit) + P3 (empty/error/loading-state sweep) + this MR draft.** Both P2 and P3 resolved to **zero code changes** (see below); the enumeration table and per-page sweep findings are the deliverable, plus this draft.
 
 Author: Abhishek. No `Co-Authored-By: Claude` trailer (standing rule).
 
