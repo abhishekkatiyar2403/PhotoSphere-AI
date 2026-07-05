@@ -64,3 +64,32 @@ export const approveAccessRequestSchema = z.object({
 export type CreateGuestInput = z.infer<typeof createGuestSchema>;
 export type AccessRequestsQuery = z.infer<typeof accessRequestsQuerySchema>;
 export type ApproveAccessRequestInput = z.infer<typeof approveAccessRequestSchema>;
+
+// --- specs/audit-and-polish.md §A4 ---
+
+// The enumerated audit actions (specs/audit-and-polish.md §A2). Keep in sync
+// with AuditAction in lib/audit.ts.
+export const AUDIT_ACTIONS = [
+  "share_created",
+  "access_requested",
+  "access_approved",
+  "access_denied",
+  "guest_revoked",
+  "photo_viewed",
+  "photo_downloaded",
+] as const;
+
+// GET /api/audit — owner-scoped, paginated, filterable (specs/audit-and-polish
+// .md §A4, AP6). Same pattern as accessRequestsQuerySchema/folderPhotosQuery.
+// `from`/`to` accept an ISO date/datetime; an invalid value is a 400 (Zod),
+// never silently ignored. All filters optional; `limit`/`offset` bounded.
+export const auditQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  action: z.enum(AUDIT_ACTIONS).optional(),
+  actorType: z.enum(["owner", "guest"]).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+});
+
+export type AuditQuery = z.infer<typeof auditQuerySchema>;

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { Router } from "express";
 import { ZodError } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
+import { logAudit } from "../lib/audit";
 import { hashGuestToken, revokeGuestSessionsForGuest } from "../lib/guestSession";
 import { prisma } from "../lib/prisma";
 import { createGuestSchema } from "../lib/validation";
@@ -102,6 +103,25 @@ router.post(
     // The frontend maps /g/:token -> POST /api/invites/:token/request. The raw
     // token is surfaced HERE, once — never persisted in plaintext.
     const inviteUrl = `${FRONTEND_ORIGIN}/g/${rawToken}`;
+
+    // Audit (specs/audit-and-polish.md §A2): fire-and-forget, POST-commit — the
+    // share is already created. A failed audit write can't undo it.
+    logAudit({
+      actorType: "owner",
+      actorId: ownerId,
+      ownerId,
+      action: "share_created",
+      resourceType: "guest",
+      resourceId: guest.id,
+      metadata: {
+        guestEmail: input.guestEmail,
+        folderIds: ownedFolders.map((f) => f.id),
+        folderNames: ownedFolders.map((f) => f.name),
+        permissionLevel: input.permissionLevel,
+        expiresAt: expiresAt ? expiresAt.toISOString() : null,
+      },
+      ipAddress: req.ip ?? null,
+    });
 
     return res.status(201).json({
       guestId: guest.id,
@@ -208,6 +228,18 @@ router.delete(
     // run after the txn so the choke-point liveness filter already reflects
     // the revoked permissions too.
     await revokeGuestSessionsForGuest(guest.id);
+
+    // Audit (specs/audit-and-polish.md §A2): fire-and-forget, POST-commit.
+    logAudit({
+      actorType: "owner",
+      actorId: ownerId,
+      ownerId,
+      action: "guest_revoked",
+      resourceType: "guest",
+      resourceId: guest.id,
+      metadata: { guestEmail: guest.email },
+      ipAddress: req.ip ?? null,
+    });
 
     return res.status(200).json({ ok: true });
   }),

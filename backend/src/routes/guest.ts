@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { ZodError } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
+import { logAudit } from "../lib/audit";
 import { PHOTO_CARD_SELECT, toPhotoCard } from "../lib/photoCard";
 import { prisma } from "../lib/prisma";
 import { getPresignedGetUrl } from "../lib/storage";
@@ -128,6 +129,21 @@ router.get(
       }
     }
 
+    // Audit (specs/audit-and-polish.md §A2): photo_viewed — SUCCESS/200 path
+    // ONLY (a 401/404 above never reaches here, so no row for a non-view). The
+    // actor is the guest; ownerId is the photo's owner (== the trail owner).
+    // Fire-and-forget, right before the response is sent (A3 read ordering).
+    logAudit({
+      actorType: "guest",
+      actorId: req.guest!.guestUserId,
+      ownerId: photo.ownerId,
+      action: "photo_viewed",
+      resourceType: "photo",
+      resourceId: photo.id,
+      metadata: { folderId: photo.folderId },
+      ipAddress: req.ip ?? null,
+    });
+
     return res.status(200).json({
       id: photo.id,
       originalFilename: photo.originalFilename,
@@ -165,6 +181,20 @@ router.get(
       // 403 (not 404): existence is legitimately known to this view-guest.
       return res.status(403).json({ error: "Download not permitted for this share" });
     }
+
+    // Audit (specs/audit-and-polish.md §A2): photo_downloaded — SUCCESS/200
+    // path ONLY. Crucially, a view-only 403 refusal and any 404 above return
+    // early WITHOUT reaching here, so neither produces a download row.
+    logAudit({
+      actorType: "guest",
+      actorId: guestUserId,
+      ownerId: photo.ownerId,
+      action: "photo_downloaded",
+      resourceType: "photo",
+      resourceId: photo.id,
+      metadata: { folderId: photo.folderId },
+      ipAddress: req.ip ?? null,
+    });
 
     const url = await getPresignedGetUrl(photo.s3Key, 60);
     return res.status(200).json({ download: { url, expiresInSeconds: 60 } });

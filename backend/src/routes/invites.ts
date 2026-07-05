@@ -1,6 +1,7 @@
 import type { Request } from "express";
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler";
+import { logAudit } from "../lib/audit";
 import {
   createGuestSessionFromHash,
   GUEST_SESSION_COOKIE_NAME,
@@ -194,6 +195,25 @@ router.post(
       guestEmail: invite.guestUser.email,
       code, // plaintext hits the mock only — never persisted, never returned here
       requestId: ar.id,
+    });
+
+    // Audit (specs/audit-and-polish.md §A2): access_requested, FRESH-request
+    // path only (the live-session already_approved and reused-pending branches
+    // above return early and are NOT logged as new requests). Actor is the
+    // GUEST; ownerId is the owner whose trail this belongs to.
+    logAudit({
+      actorType: "guest",
+      actorId: invite.guestUserId,
+      ownerId: invite.guestUser.owner.id,
+      action: "access_requested",
+      resourceType: "access_request",
+      resourceId: ar.id,
+      metadata: {
+        guestEmail: invite.guestUser.email,
+        ipCaptured: clientIp(req),
+        userAgent: deviceInfo(req).userAgent,
+      },
+      ipAddress: clientIp(req),
     });
 
     return res.status(200).json({ requestId: ar.id, status: "pending" });

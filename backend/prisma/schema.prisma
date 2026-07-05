@@ -267,6 +267,40 @@ model AccessRequest {
   @@map("access_requests")
 }
 
+// ---------------------------------------------------------------------------
+// Audit log (specs/audit-and-polish.md §A1, roadmap §6 `audit_log` +
+// idx_audit_actor, §12 Layer 6 "immutable log of all actions"). Additive —
+// no existing table altered. Append-only from the API (no PATCH/DELETE).
+//
+// Deviation from roadmap §6 (decision AP3): a denormalized `owner_id` is added
+// so `GET /api/audit` is a single indexed owner-scoped scan (an owner sees
+// entries where THEY are the actor AND where their GUEST is the actor) — no
+// join back through guest_users.created_by on every read, and leak-proofing
+// is trivial.
+//
+// NO FK relations: actorId/resourceId/ownerId are plain string IDs, NOT FK
+// relations with onDelete: Cascade. An audit row MUST survive deletion of the
+// resource it describes (a revoked guest, a deleted folder/photo) — a hard FK
+// would erase history and defeat the purpose of an immutable log. Names are
+// captured into `metadata` at write time (best-effort) and/or resolved at
+// read time.
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorType    String   @map("actor_type") // 'owner' | 'guest'
+  actorId      String   @map("actor_id") // users.id or guest_users.id
+  ownerId      String   @map("owner_id") // the owner who OWNS this trail (AP3, denormalized)
+  action       String // enumerated set (specs/audit-and-polish.md §A2)
+  resourceType String?  @map("resource_type") // 'photo' | 'folder' | 'guest' | 'access_request'
+  resourceId   String?  @map("resource_id")
+  metadata     Json? // extra context (guest email, folder names, permission level, outcome)
+  ipAddress    String?  @map("ip_address")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([ownerId, createdAt(sort: Desc)]) // the primary query: an owner's trail, newest first
+  @@index([actorId, createdAt(sort: Desc)]) // roadmap §6 idx_audit_actor
+  @@map("audit_log")
+}
+
 // Opaque, revocable guest session — mirrors `sessions` exactly (SHA-256 hash
 // only, never a JWT). expires_at added vs roadmap §6 (decision G2), capped at
 // min(GUEST_SESSION_TTL_HOURS, earliest live permission expiry).

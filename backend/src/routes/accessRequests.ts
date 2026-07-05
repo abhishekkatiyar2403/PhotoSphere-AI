@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { ZodError } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
+import { logAudit } from "../lib/audit";
 import { prisma } from "../lib/prisma";
 import { verifyOtp } from "../lib/otp";
 import { accessRequestsQuerySchema, approveAccessRequestSchema } from "../lib/validation";
@@ -103,6 +104,17 @@ router.post(
         where: { id: ar.id },
         data: { status: "expired", otpHash: null, resolvedAt: new Date(), resolvedBy: ownerId },
       });
+      // Audit (specs/audit-and-polish.md §A2): access_denied, reason=otp_expired.
+      logAudit({
+        actorType: "owner",
+        actorId: ownerId,
+        ownerId,
+        action: "access_denied",
+        resourceType: "access_request",
+        resourceId: ar.id,
+        metadata: { guestEmail: ar.guestUser.email, reason: "otp_expired" },
+        ipAddress: req.ip ?? null,
+      });
       return res.status(403).json({ error: "OTP expired" });
     }
 
@@ -122,6 +134,17 @@ router.post(
             resolvedAt: new Date(),
             resolvedBy: ownerId,
           },
+        });
+        // Audit: access_denied, reason=otp_attempts_exceeded (auto-deny).
+        logAudit({
+          actorType: "owner",
+          actorId: ownerId,
+          ownerId,
+          action: "access_denied",
+          resourceType: "access_request",
+          resourceId: ar.id,
+          metadata: { guestEmail: ar.guestUser.email, reason: "otp_attempts_exceeded" },
+          ipAddress: req.ip ?? null,
         });
         return res.status(403).json({ error: "Request denied after too many incorrect codes" });
       }
@@ -154,6 +177,18 @@ router.post(
       }),
     ]);
 
+    // Audit (specs/audit-and-polish.md §A2): access_approved, POST-commit.
+    logAudit({
+      actorType: "owner",
+      actorId: ownerId,
+      ownerId,
+      action: "access_approved",
+      resourceType: "access_request",
+      resourceId: ar.id,
+      metadata: { guestEmail: ar.guestUser.email },
+      ipAddress: req.ip ?? null,
+    });
+
     return res.status(200).json({ status: "approved" });
   }),
 );
@@ -183,6 +218,20 @@ router.post(
         resolvedAt: new Date(),
         resolvedBy: ownerId,
       },
+    });
+
+    // Audit (specs/audit-and-polish.md §A2): access_denied, reason=owner_denied.
+    // Only on this real state-transition deny — the idempotent
+    // already-denied/expired branch above returns early without a new row.
+    logAudit({
+      actorType: "owner",
+      actorId: ownerId,
+      ownerId,
+      action: "access_denied",
+      resourceType: "access_request",
+      resourceId: ar.id,
+      metadata: { guestEmail: ar.guestUser.email, reason: "owner_denied" },
+      ipAddress: req.ip ?? null,
     });
 
     return res.status(200).json({ status: "denied" });

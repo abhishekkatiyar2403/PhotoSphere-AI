@@ -1,7 +1,9 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
+import helmet from "helmet";
 import accessRequestsRouter from "./routes/accessRequests";
+import auditRouter from "./routes/audit";
 import authRouter from "./routes/auth";
 import collectionsRouter from "./routes/collections";
 import dashboardRouter from "./routes/dashboard";
@@ -15,6 +17,35 @@ export function createApp() {
   const app = express();
 
   const frontendOrigin = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
+
+  // Security headers (specs/audit-and-polish.md P1, roadmap Week 11). Helmet's
+  // safe defaults (X-Content-Type-Options: nosniff, X-Frame-Options: DENY /
+  // frame-ancestors, Referrer-Policy, HSTS, no X-Powered-By, etc.).
+  //
+  // CSP posture (AP10): a strict CSP breaks the Next dev server (inline
+  // bootstrap scripts + HMR) and can block cross-origin API/image loads. Since
+  // there is no prod deploy this pass, CSP is DISABLED under
+  // NODE_ENV=development (the practical local effect: safe non-CSP headers,
+  // frontend unbroken) and a sensible CSP is wired for prod so it's ready when
+  // a real deploy happens. crossOriginResourcePolicy is relaxed to allow the
+  // separate-origin frontend to consume this API's responses.
+  const isDev = process.env.NODE_ENV === "development";
+  app.use(
+    helmet({
+      contentSecurityPolicy: isDev
+        ? false
+        : {
+            directives: {
+              ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+              // Pre-signed image URLs come from MinIO/S3 on a different origin.
+              "img-src": ["'self'", "data:", "https:", "blob:"],
+              "connect-src": ["'self'", frontendOrigin],
+            },
+          },
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+    }),
+  );
+
   app.use(
     cors({
       origin: frontendOrigin,
@@ -40,6 +71,9 @@ export function createApp() {
   app.use("/api/access-requests", accessRequestsRouter);
   app.use("/api/invites", invitesRouter);
   app.use("/api/guest", guestRouter);
+  // Owner activity log (specs/audit-and-polish.md §A5). Single top-level GET,
+  // no route-order hazard. Append-only / list-only (no PATCH/DELETE/:id).
+  app.use("/api/audit", auditRouter);
 
   // Global error handler - catches anything forwarded via next(err),
   // including async route rejections (see lib/asyncHandler.ts), so a
