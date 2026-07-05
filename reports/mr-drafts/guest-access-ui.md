@@ -84,3 +84,41 @@ No veto needed on backend behavior — nothing about the backend's contracts cha
 - The owner-side rate limiters (signup 5/15min/IP, login 10/15min/IP under `NODE_ENV=development`) will exhaust quickly under repeated manual UI signups in one session — this build hit that exact wall partway through verification and worked around it the same way prior Tester reports document: seeding an owner + session directly via Prisma for setup, keeping the guest-side flow black-box over HTTP/browser. Not a bug in this build.
 - The dev-only OTP endpoint (`GET /api/invites/requests/:requestId/otp`) is what both this build's verification and the Tester's prior backend pass use to complete the flow without DB access — confirm `NOTIFICATIONS_EXPOSE_OTP="true"` is still set on the running backend before testing (per STATUS.md's Notes/Risks, it was flipped on for the guest-access backend pass and left on).
 - Worth a dedicated adversarial pass on this frontend specifically for: rapid double-click on Approve/Deny/Revoke (no client-side in-flight guard beyond the per-row `busy` state — verify it can't double-submit), and the guest portal's behavior if the backend cookie fails to set (e.g. a browser blocking third-party/SameSite cookies in some configuration) — the current code has no explicit fallback UI for "approved but no cookie arrived," it would just keep polling and never see `unlocked` trigger correctly on a retried status call after the claim was already made by a different tab/request.
+
+---
+
+## ADDENDUM — bug fixes for BUG-1 (High) and BUG-2 (Medium) from report `reports/2026-07-05_2015.md`
+
+**Fixed on `feature/ai-classification` (local only, not pushed, no `Co-Authored-By: Claude` trailer). Frontend-only — zero backend files touched (the backend's check-ordering is intentional per spec and stays as-is; BUG-2 is fixed on the frontend per Master's decision).**
+
+### BUG-1 [High, ship-blocking] — wrong OTP no longer ejects the owner off `/guests`
+**File/function:** `frontend/src/app/guests/page.tsx` — `handleApprove` and `handleDeny`.
+
+The bug: both handlers had a blanket `if (isAuthError(err)) { router.replace("/login"); return; }` catch branch. But the approve/deny endpoints return `401`/`403` as **business responses about the OTP/request**, not about the owner's session — so a single mistyped digit (backend `401 "Invalid code"`) bounced the owner to `/login` (→`/dashboard`), and the 3-wrong auto-deny UI could never be reached.
+
+The fix distinguishes the two kinds of 401 **by which call produced it**, not by the status code (the status is identical):
+- **Approve/Deny calls (`POST /api/access-requests/:id/approve|deny`)** — a 401 here is always "wrong OTP" and a 403 is "auto-denied / expired". These handlers now have **no `isAuthError`→`/login` branch at all**; every error is surfaced inline on the request card via the existing `actionState[requestId].error` path (rendered by `.guests-pending-error`). On a **403** (3rd-wrong auto-deny or expired OTP) the handler additionally calls `load()` so the now-terminal request drops out of the pending stream.
+- **Owner-session-gate calls** keep the redirect exactly as before: the `authApi.me()` gate effect, the `load()` list calls (`GET /api/access-requests` + `GET /api/guests`), and `handleRevoke` (`DELETE /api/guests/:id`, whose only 401 is a genuine session loss). These are the calls where a 401 truly means "owner logged out".
+
+So: wrong OTP → inline "Invalid code", stay on page; 3rd wrong → inline "Request denied after too many incorrect codes" + list refresh, stay on page; expired OTP → inline message, stay on page; genuine owner-session loss on the page's list/gate/revoke calls → redirect to `/login` (unchanged). The auto-deny state is now reachable because attempts 1–2 no longer eject the owner.
+
+### BUG-2 [Medium] — returning approved guest lands straight in their photos (Master's decided frontend fix)
+**File:** `frontend/src/app/g/[token]/page.tsx`.
+
+1. **Load-time session probe (new `useEffect`, new `'probing'` initial state).** On mount the page makes exactly **one** guest-scoped call — `GET /api/guest/folders`:
+   - **200** (a live guest session already exists — already-approved guest re-visiting) → `setState("unlocked")`, and the existing unlocked-state effect fetches and renders their scoped folders exactly as the post-approval path does. The returning guest never touches the re-request path (which would 404 on the spent `max_uses=1` invite).
+   - **401 / any error** → `setState("landing")`, the normal locked preview + "Request access".
+   The state machine type is now `'probing' | 'landing' | 'waiting' | 'unlocked'`, initial state `'probing'`. During `probing` the same decorative locked grid renders with the CTA withheld (a small "Checking whether you already have access…" spinner in the status bar), so nothing flickers.
+2. **Clearer exhausted-invite message.** In `handleRequestAccess`'s catch, a `404` now maps to *"This invite link has already been used or is no longer active. Ask the owner to share a new link."* (previously the generic "invalid or has expired" for all non-429 errors). 429 and other errors keep their existing messages.
+3. The `already_approved` short-circuit inside `handleRequestAccess` is **left in place as a harmless secondary guard** (annotated as effectively dead — the load-time probe now covers its intent, and on a spent single-use invite the backend 404s before that branch can fire).
+
+**Privacy constraint — preserved and re-confirmed after the probe.** The probe is a single `/api/guest/folders` list call. Verified live over HTTP: with no session it returns `401 {"error":"Unauthorized"}` → the `.catch()` drops to `landing` where only the 6 decorative locked tiles render (zero real image/thumbnail/pre-signed-URL data). Real photo/thumbnail data is still only ever fetched in the `unlocked` state, and `unlocked` is only reached when the probe (or the poll, or the `already_approved` guard) confirms a genuine session. A guest *without* a session sees exactly what they saw before: locked placeholders, nothing real. "Zero real image data before approval" holds exactly as originally built.
+
+### Verification (this fix)
+- `npm run typecheck -w frontend` — clean.
+- `npm run lint -w frontend` — clean (`✔ No ESLint warnings or errors`).
+- `npm run build -w frontend` — clean production build, all 12 routes present incl. `/guests` and `ƒ /g/[token]`. (Built cleanly: the running `next dev` was stopped and `.next` wiped first, then restarted fresh afterward — no mixed dev/prod `.next`.)
+- **Live over HTTP against the running stack** (backend `:4000` with `NOTIFICATIONS_EXPOSE_OTP=true`, seeded owner+guest+invite+access-request via Prisma to dodge the signup limiter, same approach as the Tester; throwaway seed script not committed):
+  - BUG-1: approve with wrong OTP → `401 {"error":"Invalid code"}` (×2), 3rd wrong → `403 {"error":"Request denied after too many incorrect codes"}`, correct OTP → `200 {"status":"approved"}`. All three are the exact responses the fixed handler now surfaces inline (401/403) without redirecting; the 403 additionally triggers the list refresh.
+  - BUG-2 probe: `GET /api/guest/folders` with no session → `401 "Unauthorized"` (probe falls through to locked `landing`); after claiming a session via the G7 status-poll handoff → `200 folders=["Nature"]` (probe jumps straight to `unlocked`). Privacy-safe: the 401 keeps everything locked.
+  - BUG-2 message: the spent-invite 404 branch is confirmed present in `backend/src/routes/invites.ts:140-143` and by the Tester's own 2026-07-05 live HTTP repro; the frontend now maps that 404 to the clearer message. (A fresh live 404 hit the per-IP invite rate limiter (429) this session — the documented benign harness class — which shadows the 404 once the `::1` bucket is exhausted; the 404 path itself is unchanged backend behavior.)

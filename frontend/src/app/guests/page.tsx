@@ -21,6 +21,12 @@ import {
   guestsApi,
 } from "@/lib/api";
 
+// Owner-session-loss detector. Use this ONLY on calls where a 401 genuinely
+// means the OWNER's session is gone (the initial authApi.me() gate, the
+// list() calls in load(), and revoke). Do NOT use it on the approve/deny
+// endpoints: there a 401 is a business response ("Invalid code" for a wrong
+// OTP), not an auth failure - bouncing the owner to /login on a mistyped
+// digit is BUG-1. Approve/deny surface every error inline instead.
 function isAuthError(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401;
 }
@@ -103,12 +109,20 @@ export default function GuestsPage() {
       setPending((prev) => prev.filter((r) => r.id !== requestId));
       await load();
     } catch (err) {
-      if (isAuthError(err)) {
-        router.replace("/login");
-        return;
-      }
+      // DELIBERATELY no isAuthError()->/login here (BUG-1). The approve
+      // endpoint's errors are all business responses about the OTP, NOT the
+      // owner's own session:
+      //   401 "Invalid code"      -> wrong OTP; show inline, owner retries.
+      //   403 "request denied"    -> 3rd wrong attempt auto-denied the request.
+      //   403 "expired" / "OTP expired" -> the code timed out.
+      // Every case stays on the page with an inline message. On a 403 the
+      // request is now terminal (auto-denied/expired), so refresh the list to
+      // drop it out of the pending stream.
       const message = err instanceof Error ? err.message : "Approval failed";
       setActionState((prev) => ({ ...prev, [requestId]: { busy: false, error: message } }));
+      if (err instanceof ApiError && err.status === 403) {
+        await load();
+      }
     }
   }
 
@@ -119,10 +133,9 @@ export default function GuestsPage() {
       setPending((prev) => prev.filter((r) => r.id !== requestId));
       await load();
     } catch (err) {
-      if (isAuthError(err)) {
-        router.replace("/login");
-        return;
-      }
+      // Same as approve: deny is an operation on the request, not an
+      // owner-session gate. Its errors (403/409 on an already-resolved
+      // request) surface inline; we never treat them as "owner logged out".
       const message = err instanceof Error ? err.message : "Deny failed";
       setActionState((prev) => ({ ...prev, [requestId]: { busy: false, error: message } }));
     }

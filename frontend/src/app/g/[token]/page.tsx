@@ -41,7 +41,15 @@ import {
 const POLL_INTERVAL_MS = 5000; // safely under the 120/15min/IP status-poll budget
 const PREVIEW_TILE_COUNT = 6; // a plausible tile count - NOT derived from any fetch
 
-type PortalState = "landing" | "waiting" | "unlocked";
+// 'probing' is the initial state: on mount we make ONE guest-scoped call
+// (GET /api/guest/folders) to see if this browser already holds a live guest
+// session (i.e. an already-approved guest re-visiting). 200 -> jump straight
+// to 'unlocked'; 401/anything-else -> fall through to 'landing' (BUG-2 fix -
+// a returning approved guest lands in their photos and never re-requests
+// against a spent single-use invite). While probing we show the same
+// decorative locked grid as 'landing' (no data behind it) with the CTA
+// withheld, so nothing flickers and the privacy constraint is untouched.
+type PortalState = "probing" | "landing" | "waiting" | "unlocked";
 type ResolvedOutcome = "denied" | "expired" | null;
 
 type PageLimit = 12;
@@ -51,7 +59,7 @@ export default function GuestPortalPage() {
   const params = useParams<{ token: string }>();
   const token = params.token;
 
-  const [state, setState] = useState<PortalState>("landing");
+  const [state, setState] = useState<PortalState>("probing");
   const [requestId, setRequestId] = useState<string | null>(null);
   const [resolvedOutcome, setResolvedOutcome] = useState<ResolvedOutcome>(null);
   const [landingError, setLandingError] = useState<string | null>(null);
@@ -89,6 +97,36 @@ export default function GuestPortalPage() {
     }
   }
 
+  // ---- Load-time session probe (BUG-2 fix) ----
+  // Exactly ONE guest-scoped call on mount to detect an existing valid guest
+  // session. This is privacy-safe: a guest WITHOUT a session gets 401 and we
+  // fall through to 'landing' (locked decorative grid only, no real data);
+  // only a guest WITH a live session (already approved) gets 200 and is sent
+  // to 'unlocked', where the existing unlocked-state effect fetches their real
+  // scoped folders/photos. We do NOT fetch any photo/thumbnail data here - the
+  // folders-list call whose 401 keeps everything locked is the only request.
+  useEffect(() => {
+    let cancelled = false;
+    guestPortalApi
+      .folders()
+      .then(() => {
+        if (cancelled) return;
+        // Live session already exists -> go straight to the photos. The
+        // unlocked-state effect will re-fetch folders (one extra list call,
+        // no image data) and render exactly as the post-approval flow does.
+        setState("unlocked");
+      })
+      .catch(() => {
+        // 401 (no/expired/revoked session) or any transient error -> normal
+        // locked landing. Never surfaces real data.
+        if (cancelled) return;
+        setState("landing");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // ---- Landing: request access ----
   async function handleRequestAccess() {
     setRequesting(true);
@@ -96,8 +134,11 @@ export default function GuestPortalPage() {
     try {
       const res = await invitesApi.request(token);
       if (res.status === "already_approved") {
-        // Short-circuit straight to unlocked - a live guest session already
-        // exists for this guest (re-click / already-approved re-visit).
+        // Secondary guard, kept as a harmless fallback. In practice the
+        // load-time session probe above already routes an already-approved
+        // guest to 'unlocked', and on a single-use invite (G6) a spent invite
+        // 404s before this branch can fire (BUG-2 root cause) - so this is
+        // effectively dead but left in as defense-in-depth. See MR draft.
         setState("unlocked");
         return;
       }
@@ -108,7 +149,13 @@ export default function GuestPortalPage() {
         err instanceof ApiError
           ? err.status === 429
             ? "Too many requests — please wait a bit and try again."
-            : "This invite link is invalid or has expired."
+            : err.status === 404
+              ? // A genuinely spent single-use invite (G6): a forwarded link,
+                // or a revoked/expired guest re-clicking. An already-approved
+                // guest with a live session never reaches here (the load-time
+                // probe sends them straight to their photos).
+                "This invite link has already been used or is no longer active. Ask the owner to share a new link."
+              : "This invite link is invalid or has expired."
           : "Something went wrong. Please try again.";
       setLandingError(message);
     } finally {
@@ -280,6 +327,16 @@ export default function GuestPortalPage() {
             </div>
 
             <div className="portal-status-bar" data-testid="portal-status-bar">
+              {state === "probing" && (
+                <div className="portal-waiting" data-testid="portal-probing">
+                  <div className="portal-spinner" aria-hidden="true" />
+                  <div>
+                    <h3>Loading…</h3>
+                    <p>Checking whether you already have access to these photos.</p>
+                  </div>
+                </div>
+              )}
+
               {state === "landing" && (
                 <div className="portal-status-cta">
                   <h3>Ask for access to these photos</h3>
