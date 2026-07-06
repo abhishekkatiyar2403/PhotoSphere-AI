@@ -45,7 +45,12 @@ export type AuditAction =
   | "access_denied"
   | "guest_revoked"
   | "photo_viewed"
-  | "photo_downloaded";
+  | "photo_downloaded"
+  // specs/folder-mgmt-download-search.md P4 (F4): destructive folder ops that
+  // interact with sharing get an owner-actor audit row. Plain rename is NOT
+  // audited (cosmetic, high-frequency — matches the AP1 owner-content exclusion).
+  | "folder_merged"
+  | "folder_deleted";
 
 export type AuditActorType = "owner" | "guest";
 

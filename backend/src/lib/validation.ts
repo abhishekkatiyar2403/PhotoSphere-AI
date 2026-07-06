@@ -37,6 +37,23 @@ export type CreateFolderInput = z.infer<typeof createFolderSchema>;
 export type MovePhotoInput = z.infer<typeof movePhotoSchema>;
 export type FolderPhotosQuery = z.infer<typeof folderPhotosQuerySchema>;
 
+// --- specs/folder-mgmt-download-search.md PART P4 ---
+
+// PATCH /api/folders/:id — rename only (reorder is out of scope, F6). Trimmed;
+// empty/whitespace → 400 before any DB write. Collision (@@unique[collectionId,
+// name]) is caught as P2002 → 409 in the route, NOT an app pre-check.
+export const folderRenameSchema = z.object({
+  name: z.string().trim().min(1, "Folder name is required").max(255, "Folder name too long"),
+});
+
+// POST /api/folders/:id/merge — merge source A (:id) into target B (targetFolderId).
+export const folderMergeSchema = z.object({
+  targetFolderId: z.string().uuid("targetFolderId must be a UUID"),
+});
+
+export type FolderRenameInput = z.infer<typeof folderRenameSchema>;
+export type FolderMergeInput = z.infer<typeof folderMergeSchema>;
+
 // --- specs/guest-access-otp.md §5 ---
 
 export const PERMISSION_LEVELS = ["view", "download", "download_all"] as const;
