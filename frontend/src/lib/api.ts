@@ -358,3 +358,70 @@ export const guestPortalApi = {
   download: (photoId: string): Promise<{ download: { url: string; expiresInSeconds: number } }> =>
     apiFetch(`/api/guest/photos/${photoId}/download`, { method: "GET" }),
 };
+
+// --- Owner activity log (specs/audit-and-polish.md §A4, GET /api/audit) ---
+// The owner-scoped, append-only, list-only audit trail powering the /activity
+// page (design/wireframes/audit-viewer.svg - P7 Option A). requireAuth-gated,
+// same owner cookie as authApi; the response carries NO image data / no
+// pre-signed URLs - only ids + metadata captured at write time. Same
+// apiFetch/ApiError/credentials:"include" conventions as every group above.
+
+export type AuditAction =
+  | "share_created"
+  | "access_requested"
+  | "access_approved"
+  | "access_denied"
+  | "guest_revoked"
+  | "photo_viewed"
+  | "photo_downloaded";
+
+export type AuditActorType = "owner" | "guest";
+
+// metadata is whatever the choke point captured at write time (see the
+// backend's logAudit calls). It's deliberately loose - the page reads known
+// keys defensively (folderNames, folderName, guestEmail, permissionLevel,
+// reason, folderId) and falls back to ids when a label is absent (append-only
+// history can outlive the resource it describes).
+export type AuditMetadata = Record<string, unknown> | null;
+
+export type AuditEntry = {
+  id: string;
+  actorType: AuditActorType;
+  actor: { id: string; email?: string };
+  action: AuditAction;
+  resourceType: string | null;
+  resourceId: string | null;
+  metadata: AuditMetadata;
+  ipAddress: string | null;
+  createdAt: string;
+};
+
+export type AuditListResponse = {
+  entries: AuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type AuditListParams = {
+  limit?: number;
+  offset?: number;
+  action?: AuditAction;
+  actorType?: AuditActorType;
+  from?: string; // ISO date
+  to?: string; // ISO date
+};
+
+export const auditApi = {
+  list: (params: AuditListParams = {}): Promise<AuditListResponse> => {
+    const qs = new URLSearchParams();
+    if (params.limit != null) qs.set("limit", String(params.limit));
+    if (params.offset != null) qs.set("offset", String(params.offset));
+    if (params.action) qs.set("action", params.action);
+    if (params.actorType) qs.set("actorType", params.actorType);
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    const q = qs.toString();
+    return apiFetch(`/api/audit${q ? `?${q}` : ""}`, { method: "GET" });
+  },
+};

@@ -149,6 +149,9 @@ export default function DashboardPage() {
           <Link href="/guests" className="dashboard-guests-link" data-testid="dashboard-guests-link">
             Guests
           </Link>
+          <Link href="/activity" className="dashboard-guests-link" data-testid="dashboard-activity-link">
+            Activity
+          </Link>
           <span>{user.name}</span>
           <button type="button" className="dashboard-logout" onClick={handleLogout}>
             Log out

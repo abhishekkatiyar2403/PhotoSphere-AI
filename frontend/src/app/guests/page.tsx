@@ -162,6 +162,11 @@ export default function GuestsPage() {
     <main className="guests-shell">
       <div className="organize-topbar">
         <h1>PhotoSphere AI — Guests</h1>
+        <div className="dashboard-topbar-right">
+          <Link href="/activity" className="dashboard-guests-link" data-testid="guests-activity-link">
+            Activity
+          </Link>
+        </div>
       </div>
 
       <div className="guests-content">
