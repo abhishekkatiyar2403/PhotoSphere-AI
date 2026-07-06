@@ -109,7 +109,10 @@ router.get(
   "/photos/:id",
   requireGuest,
   asyncHandler(async (req, res) => {
-    const photo = await prisma.photo.findUnique({ where: { id: req.params.id } });
+    const photo = await prisma.photo.findUnique({
+      where: { id: req.params.id },
+      include: { folder: { select: { name: true } } },
+    });
     const permittedIds = await getPermittedFolderIds(req.guest!.guestUserId);
     if (!photo || !photo.folderId || !permittedIds.has(photo.folderId)) {
       return res.status(404).json({ error: "Photo not found" });
@@ -140,7 +143,7 @@ router.get(
       action: "photo_viewed",
       resourceType: "photo",
       resourceId: photo.id,
-      metadata: { folderId: photo.folderId },
+      metadata: { folderId: photo.folderId, folderName: photo.folder?.name ?? null },
       ipAddress: req.ip ?? null,
     });
 
@@ -169,7 +172,10 @@ router.get(
   "/photos/:id/download",
   requireGuest,
   asyncHandler(async (req, res) => {
-    const photo = await prisma.photo.findUnique({ where: { id: req.params.id } });
+    const photo = await prisma.photo.findUnique({
+      where: { id: req.params.id },
+      include: { folder: { select: { name: true } } },
+    });
     const guestUserId = req.guest!.guestUserId;
     const permittedIds = await getPermittedFolderIds(guestUserId);
     if (!photo || !photo.folderId || !permittedIds.has(photo.folderId)) {
@@ -192,7 +198,7 @@ router.get(
       action: "photo_downloaded",
       resourceType: "photo",
       resourceId: photo.id,
-      metadata: { folderId: photo.folderId },
+      metadata: { folderId: photo.folderId, folderName: photo.folder?.name ?? null },
       ipAddress: req.ip ?? null,
     });
 
