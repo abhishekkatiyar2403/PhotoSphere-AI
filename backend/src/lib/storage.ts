@@ -6,6 +6,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import type { Readable } from "node:stream";
 
 /**
  * Thin wrapper around the AWS S3 SDK v3, pointed at MinIO's endpoint.
@@ -54,6 +55,30 @@ export async function putObject(key: string, body: Buffer, contentType: string):
 export async function getPresignedGetUrl(key: string, expiresInSeconds = 60): Promise<string> {
   const command = new GetObjectCommand({ Bucket: BUCKET, Key: key });
   return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
+}
+
+/**
+ * Returns an AUTHORIZED server-side read stream for one MinIO object. The
+ * backend holds the credentials; this is used by the on-the-fly folder-zip
+ * assembly (lib/folderZip.ts) to pipe object bytes into the archive WITHOUT
+ * ever handing the client a raw key or pre-signed URL — the client only ever
+ * receives the resulting zip bytes. Distinct from getPresignedGetUrl (which
+ * hands the CLIENT a short-lived URL for a single image); this one keeps the
+ * bytes flowing inside the backend for bulk streaming.
+ *
+ * Throws if the object does not exist / the read fails — callers streaming a
+ * zip catch this and abort the archive (Z5), never emitting a partial 200.
+ */
+export async function getObjectStream(key: string): Promise<Readable> {
+  const command = new GetObjectCommand({ Bucket: BUCKET, Key: key });
+  const response = await s3.send(command);
+  const body = response.Body;
+  if (!body) {
+    throw new Error(`No body returned for object ${key}`);
+  }
+  // In Node the SDK v3 Body is a Readable stream (IncomingMessage). The union
+  // type includes browser ReadableStream/Blob, which never occur under Node.
+  return body as Readable;
 }
 
 export { BUCKET };

@@ -3,6 +3,8 @@ import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logAudit } from "../lib/audit";
+import { preflightFolderDownload } from "../lib/folderDownload";
+import { streamFolderZip } from "../lib/folderZip";
 import { PHOTO_CARD_SELECT, toPhotoCard } from "../lib/photoCard";
 import { prisma } from "../lib/prisma";
 import { serializableTransaction } from "../lib/serializableTransaction";
@@ -303,6 +305,39 @@ router.delete(
     });
 
     return res.status(200).json({ deleted: true, photosOrphaned: orphaned });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// PART P5 — bulk "download all" / folder zip (owner)
+// ---------------------------------------------------------------------------
+
+// GET /api/folders/:id/download-all — stream a ZIP of the owner's folder's
+// downloadable photos, assembled on-the-fly from authorized MinIO reads (never
+// a raw key / pre-signed URL to the client). Ownership via
+// folder -> collection -> ownerId → 404 if not owned. Z4: only stored `done`
+// originals. Z6: 0 downloadable → 400. Z3: > cap → 409. ALL pre-flight checks
+// run BEFORE any byte is written so ordinary failures are clean 404/400/409.
+// No audit for the owner's own zip (Z7 / AP1: owner-on-own-data not audited).
+router.get(
+  "/:id/download-all",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const folder = await findOwnedFolder(req.params.id, req.user!.id);
+    if (!folder) {
+      return res.status(404).json({ error: "Folder not found" });
+    }
+
+    // Z6/Z3 pre-flight BEFORE any streaming — clean HTTP errors only here.
+    const pre = await preflightFolderDownload(folder.id);
+    if (!pre.ok) {
+      return res.status(pre.status).json({ error: pre.error });
+    }
+
+    // Hand off to the shared streaming assembly. From here bytes flow and no
+    // clean JSON error is possible; a mid-stream read failure aborts+destroys
+    // (Z5) inside streamFolderZip.
+    await streamFolderZip(res, { folderName: folder.name, photos: pre.photos });
   }),
 );
 

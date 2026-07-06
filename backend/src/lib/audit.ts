@@ -50,7 +50,11 @@ export type AuditAction =
   // interact with sharing get an owner-actor audit row. Plain rename is NOT
   // audited (cosmetic, high-frequency — matches the AP1 owner-content exclusion).
   | "folder_merged"
-  | "folder_deleted";
+  | "folder_deleted"
+  // specs/folder-mgmt-download-search.md P5 (Z7): a GUEST bulk folder-zip
+  // download — the "who downloaded everything" differentiator. The owner's own
+  // zip is NOT audited (owner-on-own-data, per AP1). Success-path only.
+  | "folder_downloaded";
 
 export type AuditActorType = "owner" | "guest";
 

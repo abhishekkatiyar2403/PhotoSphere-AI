@@ -2,6 +2,8 @@ import { Router } from "express";
 import { ZodError } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logAudit } from "../lib/audit";
+import { preflightFolderDownload } from "../lib/folderDownload";
+import { streamFolderZip } from "../lib/folderZip";
 import { PHOTO_CARD_SELECT, toPhotoCard } from "../lib/photoCard";
 import { prisma } from "../lib/prisma";
 import { getPresignedGetUrl } from "../lib/storage";
@@ -204,6 +206,75 @@ router.get(
 
     const url = await getPresignedGetUrl(photo.s3Key, 60);
     return res.status(200).json({ download: { url, expiresInSeconds: 60 } });
+  }),
+);
+
+// GET /api/guest/folders/:id/download-all — stream a ZIP of a permitted
+// folder's downloadable photos (specs/folder-mgmt-download-search.md PART P5).
+// :id must be in the guest's permitted set else 404 (the single choke point).
+// Z1: requires the LIVE permission level to be `download_all` — a `download`-
+// only or `view`-only guest gets 403 (a known-resource authorization limit is
+// 403, matching the per-photo view→download house rule). Z6: 0 downloadable →
+// 400; Z3: > cap → 409. All pre-flight (scope, level, cap, non-empty) runs
+// BEFORE any byte. Z7: ONE folder_downloaded audit row on the SUCCESS path only
+// (a 403/404/400/409 writes NO row).
+router.get(
+  "/folders/:id/download-all",
+  requireGuest,
+  asyncHandler(async (req, res) => {
+    const guestUserId = req.guest!.guestUserId;
+
+    // Choke point: not in the permitted set → 404 (indistinguishable from
+    // nonexistent — never confirm a folder the guest can't see).
+    const permittedIds = await getPermittedFolderIds(guestUserId);
+    if (!permittedIds.has(req.params.id)) {
+      return res.status(404).json({ error: "Folder not found" });
+    }
+
+    // Z1: bulk zip requires the `download_all` level specifically. A permitted
+    // folder is legitimately known to this guest, so a level shortfall is 403
+    // (not 404) — same as the per-photo view→download 403.
+    const level = await getFolderPermissionLevel(guestUserId, req.params.id);
+    if (level !== "download_all") {
+      return res.status(403).json({ error: "Bulk download not permitted for this share" });
+    }
+
+    // Z6/Z3 pre-flight BEFORE streaming — clean HTTP errors only here.
+    const pre = await preflightFolderDownload(req.params.id);
+    if (!pre.ok) {
+      return res.status(pre.status).json({ error: pre.error });
+    }
+
+    // Need the folder's name (header + audit) and owner (audit trail owner).
+    const folder = await prisma.folder.findUnique({
+      where: { id: req.params.id },
+      include: { collection: { select: { ownerId: true } } },
+    });
+    if (!folder) {
+      // Raced away between the checks above and here — 404, no row.
+      return res.status(404).json({ error: "Folder not found" });
+    }
+
+    // Z7: audit ONE folder_downloaded row — SUCCESS path only, fire-and-forget,
+    // right before streaming begins (a 403/404/400/409 above returned early and
+    // never reaches here, so a refusal writes NO row). ownerId is the folder's
+    // owner (the trail owner); actor is the guest.
+    logAudit({
+      actorType: "guest",
+      actorId: guestUserId,
+      ownerId: folder.collection.ownerId,
+      action: "folder_downloaded",
+      resourceType: "folder",
+      resourceId: folder.id,
+      metadata: {
+        folderId: folder.id,
+        folderName: folder.name,
+        photoCount: pre.photos.length,
+      },
+      ipAddress: req.ip ?? null,
+    });
+
+    await streamFolderZip(res, { folderName: folder.name, photos: pre.photos });
   }),
 );
 
