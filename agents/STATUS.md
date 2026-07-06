@@ -184,7 +184,7 @@ None of these block further work — all ten defaults are already built, shipped
 - **AP7 / AP8 / AP9. Folder rename-merge-delete / bulk download-all / basic search = DEFERRED to their own specs** (feature work, not polish). Veto to pull any into this pass.
 
 **NEW 2026-07-05 — 1 UI surface from Week 11–12 needing the standard propose→pick→build wireframe round (NOT built in this backend pass; Master to queue after the audit backend ships):**
-- **P7. Owner activity-log viewer** — a filterable, paginated activity feed rendering the `GET /api/audit` trail (action, actor, resource, time, IP/device). Real layout choices (dedicated `/activity` page vs. a tab on `/guests` vs. a `/dashboard` section; how much `metadata` to surface; how to render mixed owner/guest actor rows). Backend is NOT blocked on it — `GET /api/audit` is HTTP-testable without the UI.
+- **P7. Owner activity-log viewer — PICKED 2026-07-06: Option A, a dedicated `/activity` page** (own top-bar entry; full filter bar = action dropdown + owner/guest toggle + from/to date range, over a paginated newest-first feed; owner vs. guest rows badged; each row = action label + actor + resource/metadata + IP + relative time). Record: `design/wireframes/audit-viewer.svg` (proposals A/B/C retained under `proposals/`). Chosen over B (Guests tab — cramped filters) and C (dashboard card — truncated, not standalone). Master's recommendation matched. **Frontend build now UNBLOCKED — being built this cycle.**
 
 ## Next Scheduled Actions
 - 06:00 daily — Tester Agent regression pass (Docker/dev-server prerequisites unchanged, see Notes/Risks — still not automated via cron in this environment).
