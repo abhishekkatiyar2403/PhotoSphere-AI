@@ -111,10 +111,13 @@ function detailLine(entry: AuditEntry): string {
   switch (entry.action) {
     case "photo_downloaded":
     case "photo_viewed": {
-      // Choke point captures folderId only (no folder name), so fall back to
-      // the id gracefully. resourceId is the photo id.
+      // Prefer the folder name (captured at write time on newer rows); fall
+      // back to the id for older rows written before folderName was captured
+      // (append-only history can outlive the resource it names).
+      const folderName = metaStr(md, "folderName");
       const folderId = metaStr(md, "folderId");
-      const where = folderId ? ` in folder ${folderId}` : "";
+      const folderLabel = folderName ?? (folderId ? `folder ${folderId}` : null);
+      const where = folderLabel ? ` in ${folderLabel}` : "";
       return `photo${where}${ip}`;
     }
     case "access_approved": {
