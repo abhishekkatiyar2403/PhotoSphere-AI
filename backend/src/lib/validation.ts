@@ -54,6 +54,56 @@ export const folderMergeSchema = z.object({
 export type FolderRenameInput = z.infer<typeof folderRenameSchema>;
 export type FolderMergeInput = z.infer<typeof folderMergeSchema>;
 
+// --- specs/folder-mgmt-download-search.md PART P6 (basic search) ---
+
+// S1: the known AI categories. `category` is matched against the photo's FOLDER
+// NAME (the AI-generated folders ARE named for their category) — no new column,
+// no new index. An unknown value → 400 (Zod enum). Raw-Vision-label search is
+// DEFERRED (labels aren't in a queryable per-photo column this pass).
+export const SEARCH_CATEGORIES = [
+  "People",
+  "Nature",
+  "Animals",
+  "Food",
+  "Vehicles",
+  "Documents",
+  "Screenshots",
+  "Uncategorized",
+] as const;
+
+// The reserved literal for folderId that selects photos with folderId = null
+// (S3). A real folderId is a UUID; "unfiled" is the one non-UUID accepted value.
+export const UNFILED_FOLDER_LITERAL = "unfiled";
+
+// GET /api/search — owner-scoped. All filters via query (S1–S7 defaults):
+//  - q: substring on originalFilename, case-insensitive (Prisma contains +
+//    mode insensitive = SQL ILIKE, S4). Trimmed; empty → treated as absent.
+//  - from/to: ISO date, range on createdAt (S2, upload time). Invalid date is a
+//    400 (Zod); from > to is a 400 (checked in the route, needs both parsed).
+//  - folderId: a UUID (restrict to that folder, 404 if not owned) OR the literal
+//    "unfiled" (folderId = null photos) — S3.
+//  - category: a known-category enum, matched against the caller's folder name
+//    (S1). Unknown value → 400.
+//  - limit/offset: same shape as folderPhotosQuerySchema; limit > 100 → 400
+//    (the house rule, not a clamp).
+export const searchQuerySchema = z.object({
+  q: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  folderId: z
+    .union([z.string().uuid("folderId must be a UUID"), z.literal(UNFILED_FOLDER_LITERAL)])
+    .optional(),
+  category: z.enum(SEARCH_CATEGORIES).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export type SearchQuery = z.infer<typeof searchQuerySchema>;
+
 // --- specs/guest-access-otp.md §5 ---
 
 export const PERMISSION_LEVELS = ["view", "download", "download_all"] as const;

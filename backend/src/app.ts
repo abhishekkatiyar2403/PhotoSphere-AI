@@ -12,6 +12,7 @@ import guestRouter from "./routes/guest";
 import guestsRouter from "./routes/guests";
 import invitesRouter from "./routes/invites";
 import photosRouter from "./routes/photos";
+import searchRouter from "./routes/search";
 
 export function createApp() {
   const app = express();
@@ -74,6 +75,9 @@ export function createApp() {
   // Owner activity log (specs/audit-and-polish.md §A5). Single top-level GET,
   // no route-order hazard. Append-only / list-only (no PATCH/DELETE/:id).
   app.use("/api/audit", auditRouter);
+  // Basic search (specs/folder-mgmt-download-search.md PART P6). Owner-scoped
+  // single top-level GET, no :id shadowing hazard. No audit (S7).
+  app.use("/api/search", searchRouter);
 
   // Global error handler - catches anything forwarded via next(err),
   // including async route rejections (see lib/asyncHandler.ts), so a
