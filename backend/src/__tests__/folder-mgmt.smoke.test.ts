@@ -478,3 +478,146 @@ describe("DELETE /api/folders/:id", () => {
     expect(res.status).toBe(401);
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /api/photos/unfiled — folder-delete orphan reachability (P4 deviation fix)
+// ---------------------------------------------------------------------------
+// F2's promise is "photos remain reachable" after a folder delete: DELETE moves
+// the folder's photos to folderId = null but leaves them 'done'. The old
+// /unfiled filter (status IN failed|duplicate) silently dropped those 'done'
+// orphans — no folder AND not in the status filter = invisible in the UI. The
+// fix anchors /unfiled on folderId IS NULL and admits any TERMINAL status
+// (excludes only in-flight pending/processing). These tests pin the new
+// semantics on a DEDICATED owner so the /unfiled counts are deterministic and
+// don't collide with the rename/merge/delete seeding above.
+describe("GET /api/photos/unfiled — surfaces folder-delete orphans (P4 F2 reachability)", () => {
+  const unfiledEmail = `folder-unfiled-${stamp}@example.com`;
+  let unfiledCookie: string;
+  let unfiledOwnerId: string;
+  let unfiledCollectionId: string;
+
+  beforeAll(async () => {
+    if (!infraAvailable) return;
+    const signup = await request(app)
+      .post("/api/auth/signup")
+      .send({ email: unfiledEmail, password, name: "Unfiled Owner" });
+    unfiledCookie = signup.headers["set-cookie"][0];
+    unfiledOwnerId = signup.body.user.id;
+    const c = await prisma.collection.create({
+      data: { ownerId: unfiledOwnerId, name: "My Photos", isDefault: true },
+    });
+    unfiledCollectionId = c.id;
+  }, 30_000);
+
+  afterAll(async () => {
+    if (infraAvailable) {
+      await prisma.user.deleteMany({ where: { email: unfiledEmail } });
+    }
+  });
+
+  it("a `done` photo orphaned by a folder DELETE now appears in /unfiled (regression: it did NOT before this fix)", async () => {
+    if (skipInfra()) return;
+    // Seed a folder holding a single `done` photo, then delete the folder (P4).
+    const f = await seedFolder({
+      collectionId: unfiledCollectionId,
+      ownerId: unfiledOwnerId,
+      name: `unfiled-del-${stamp}`,
+      photos: 1,
+    });
+    const orphanId = f.photoIds[0];
+
+    // Before delete: the photo is filed, so it is NOT in /unfiled.
+    const before = await request(app).get("/api/photos/unfiled").set("Cookie", unfiledCookie);
+    expect(before.status).toBe(200);
+    expect(before.body.photos.map((p: { id: string }) => p.id)).not.toContain(orphanId);
+
+    const del = await request(app).delete(`/api/folders/${f.id}`).set("Cookie", unfiledCookie);
+    expect(del.status).toBe(200);
+    expect(del.body.photosOrphaned).toBe(1);
+
+    // The orphaned photo is folderId null + status 'done' — the exact case the
+    // old filter dropped. It must now surface.
+    const p = await prisma.photo.findUnique({ where: { id: orphanId } });
+    expect(p?.folderId).toBeNull();
+    expect(p?.aiClassificationStatus).toBe("done");
+
+    const after = await request(app).get("/api/photos/unfiled").set("Cookie", unfiledCookie);
+    expect(after.status).toBe(200);
+    const ids = after.body.photos.map((x: { id: string }) => x.id);
+    expect(ids).toContain(orphanId);
+    const card = after.body.photos.find((x: { id: string }) => x.id === orphanId);
+    expect(card.status).toBe("done");
+  });
+
+  it("a filed `done` photo (still in a folder) NEVER appears in /unfiled", async () => {
+    if (skipInfra()) return;
+    // A folder that is NOT deleted — its `done` photo stays filed.
+    const f = await seedFolder({
+      collectionId: unfiledCollectionId,
+      ownerId: unfiledOwnerId,
+      name: `unfiled-filed-${stamp}`,
+      photos: 1,
+    });
+    const filedId = f.photoIds[0];
+
+    const res = await request(app).get("/api/photos/unfiled").set("Cookie", unfiledCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.photos.map((x: { id: string }) => x.id)).not.toContain(filedId);
+  });
+
+  it("an in-flight folderId-null photo (pending/processing) does NOT appear in /unfiled", async () => {
+    if (skipInfra()) return;
+    // A photo mid-pipeline: no folder yet, but pending — transiently unfiled,
+    // NOT actually unfiled. Must be excluded.
+    const pending = await prisma.photo.create({
+      data: {
+        ownerId: unfiledOwnerId,
+        s3Key: `seed/${unfiledOwnerId}/pending.jpg`,
+        originalFilename: "pending.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: 1234,
+        aiClassificationStatus: "pending",
+        collectionId: unfiledCollectionId,
+        folderId: null,
+      },
+    });
+    const processing = await prisma.photo.create({
+      data: {
+        ownerId: unfiledOwnerId,
+        s3Key: `seed/${unfiledOwnerId}/processing.jpg`,
+        originalFilename: "processing.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: 1234,
+        aiClassificationStatus: "processing",
+        collectionId: unfiledCollectionId,
+        folderId: null,
+      },
+    });
+
+    const res = await request(app).get("/api/photos/unfiled").set("Cookie", unfiledCookie);
+    expect(res.status).toBe(200);
+    const ids = res.body.photos.map((x: { id: string }) => x.id);
+    expect(ids).not.toContain(pending.id);
+    expect(ids).not.toContain(processing.id);
+  });
+
+  it("a `failed` unfiled photo still appears (existing semantics preserved)", async () => {
+    if (skipInfra()) return;
+    const failed = await prisma.photo.create({
+      data: {
+        ownerId: unfiledOwnerId,
+        s3Key: `seed/${unfiledOwnerId}/failed.jpg`,
+        originalFilename: "failed.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: 1234,
+        aiClassificationStatus: "failed",
+        collectionId: unfiledCollectionId,
+        folderId: null,
+      },
+    });
+
+    const res = await request(app).get("/api/photos/unfiled").set("Cookie", unfiledCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.photos.map((x: { id: string }) => x.id)).toContain(failed.id);
+  });
+});

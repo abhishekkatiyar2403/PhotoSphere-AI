@@ -183,10 +183,29 @@ router.get(
       throw err;
     }
 
+    // "Unfiled" means: the owner's photos that are in NO folder, whatever the
+    // reason. The load-bearing condition is `folderId: null` — a photo with a
+    // folder is filed, full stop, and can never appear here.
+    //
+    // Fix (reports/mr-drafts/folder-mgmt.md, P4 deviation): the old filter was
+    // `aiClassificationStatus IN ('failed','duplicate')`, which only worked by
+    // accident (failed/duplicate photos also happen to have folderId null). It
+    // silently DROPPED a `done` photo orphaned by DELETE /api/folders/:id (F2
+    // moves the folder's photos to folderId = null but leaves status 'done') —
+    // that photo had no folder AND wasn't in the status filter, so it was
+    // unreachable in the UI, recreating the 2026-07-03 "photos unreachable" bug
+    // class and breaking F2's "photos remain reachable" promise.
+    //
+    // Anchor on folderId: null and admit any TERMINAL status. We exclude the
+    // in-flight statuses ('pending'/'processing') rather than enumerating the
+    // terminal ones so a future terminal status is surfaced by default:
+    // pending/processing photos are only transiently folderId = null while the
+    // worker runs — they're mid-pipeline, not unfiled, and surfacing them would
+    // be wrong and flickery. Terminal set today: done | failed | duplicate.
     const where: Prisma.PhotoWhereInput = {
       ownerId: req.user!.id,
       folderId: null,
-      aiClassificationStatus: { in: ["failed", "duplicate"] },
+      aiClassificationStatus: { notIn: ["pending", "processing"] },
     };
 
     const [total, photos] = await prisma.$transaction([

@@ -2,7 +2,7 @@
 
 **Branch:** `feature/ai-classification`
 **Spec:** `specs/folder-mgmt-download-search.md` — PART P4 (on the confirmed F1–F6 defaults)
-**Scope:** backend + tests only. No UI (P4's `/organize` surface is wireframe-blocked). No schema change, no migration, no new dependency.
+**Scope:** backend + tests only. No UI (P4's `/organize` surface is wireframe-blocked). No schema change, no migration, no new dependency. **Includes a follow-up fix** broadening `GET /api/photos/unfiled` so folder-delete orphans stay reachable (the deviation this MR originally flagged — now resolved, see the bottom section).
 
 ## Summary
 
@@ -60,9 +60,10 @@ Rename is **not** audited (F4).
 - `backend/src/routes/folders.ts` — the three routes + `hasLivePermission` / `findOwnedFolder` helpers.
 - `backend/src/lib/validation.ts` — `folderRenameSchema`, `folderMergeSchema` (+ inferred types).
 - `backend/src/lib/audit.ts` — two new `AuditAction` literals.
-- `backend/src/__tests__/folder-mgmt.smoke.test.ts` — new, 17 tests.
+- `backend/src/__tests__/folder-mgmt.smoke.test.ts` — new, 21 tests (17 P4 + 4 `/unfiled` orphan-reachability, see the follow-up fix below).
+- `backend/src/routes/photos.ts` — **follow-up fix (see below):** broadened the `GET /api/photos/unfiled` WHERE to close the P4 delete reachability gap.
 
-## Test coverage (17 new tests, all green)
+## Test coverage (17 P4 tests, all green)
 
 Seeds folders/photos/permissions directly via Prisma (no worker dependency), skip-not-fake on infra.
 - **Rename:** 200 + DB name update + counts untouched; **409 collision** (caught @@unique); **400** empty/whitespace + >255; **404** cross-owner (no change); **F5** rename an `ai_generated` folder; 401 no session.
@@ -73,10 +74,28 @@ Seeds folders/photos/permissions directly via Prisma (no worker dependency), ski
 
 - `npm run typecheck -w backend` — clean.
 - `npm run lint -w backend` — clean.
-- `npm test -w backend` — **102/102** (was 85; +17 new). New file: 17/17.
+- `npm test -w backend` — **106/106** (was 85 pre-P4 → 102 after P4 → +4 `/unfiled` orphan tests). New file: 21/21.
 
-## Deviation flagged (needs Master/Planner attention — do NOT treat as verified)
+## Deviation RESOLVED (follow-up fix, same branch)
 
-The P4 delete acceptance criterion says orphaned photos "subsequently appear under `GET /api/photos/unfiled`." The **existing** `/api/photos/unfiled` route filters `aiClassificationStatus IN ('failed','duplicate')` (it was built to surface only failed/duplicate cards for the Organize UI). A `done` photo whose folder is deleted becomes `folderId = null, status = 'done'`, so it will **not** appear in the current `/unfiled` route — it satisfies "unfiled" (`folderId = null`) but not that route's status filter.
+The P4 delete AC said orphaned photos "subsequently appear under `GET /api/photos/unfiled`." When P4 landed (`057605c`) that route filtered `aiClassificationStatus IN ('failed','duplicate')`, so a `done` photo orphaned by a folder-delete (`folderId = null, status = 'done'`) was in NO folder AND NOT in that status filter — invisible/unreachable in the UI, silently breaking F2's "photos remain reachable" promise (recreating the 2026-07-03 "photos unreachable" bug class). The flagged decision resolved in favor of **broadening `/unfiled`**: "unfiled" means *not in any folder*, whatever the reason.
 
-I did **not** broaden the `/unfiled` filter, because (a) it would change a Tester-verified surface with existing assertions on exact `total` counts (classification.smoke.test.ts), and (b) whether Unfiled should include done-status orphans is a product/semantics call, not a Developer guess. The delete behavior is spec-correct (`folderId = null`), and the test asserts `folderId = null` in the DB directly. **Decision needed:** either broaden `/api/photos/unfiled` (and the dashboard Unfiled tile) to include `folderId = null` regardless of status, or amend the AC to say "orphaned photos have `folderId = null`" rather than "appear under `/api/photos/unfiled`." Logged for Master.
+**The fix (`backend/src/routes/photos.ts`, the `/unfiled` handler):** anchor on `folderId: null` (the load-bearing condition — a photo with a folder can never appear) and admit any TERMINAL status by EXCLUDING the in-flight ones:
+
+```
+WHERE ownerId = req.user.id
+  AND folderId IS NULL
+  AND aiClassificationStatus NOT IN ('pending','processing')
+```
+
+Status enum (from `schema.prisma:133`, a free string documented `pending|processing|done|duplicate|failed`) — there is **no** distinct `uncategorized` *status* (Uncategorized is only a folder). Terminal set admitted today: `done | failed | duplicate`. We phrase it as `NOT IN (pending, processing)` rather than enumerating the terminals so any future terminal status surfaces by default; `pending`/`processing` photos are only transiently `folderId = null` mid-pipeline (worker not done) — surfacing them would be wrong/flickery, so they're excluded.
+
+**No filed photo can leak:** because we anchor on `folderId IS NULL`, a normal `done` photo (which HAS a folder) is structurally excluded — the change ONLY adds `folderId`-null terminal orphans, never any filed photo (negative test asserts this). Everything else about the endpoint is identical: owner-scoped, newest-first, paginated, pre-signed 60s thumbnails via `PHOTO_CARD_SELECT`/`toPhotoCard`, duplicate-of-X labels, response shape — so `/organize`'s Unfiled bucket and the `/dashboard` Unfiled tile need no frontend change; the broader set just shows up.
+
+**Tests (4 added to `folder-mgmt.smoke.test.ts`, dedicated owner for deterministic counts):**
+- **New case:** seed a folder with a `done` photo → DELETE the folder (P4) → the `done` orphan now appears in `/unfiled` (it did NOT before this fix), with `status: "done"`; asserted absent before the delete.
+- **Negative (leak guard):** a filed `done` photo (still in a folder) NEVER appears.
+- **Negative (in-flight):** `pending` and `processing` `folderId`-null photos do NOT appear.
+- **Preserved semantics:** a `failed` `folderId`-null photo still appears.
+
+**No count-assertion changes elsewhere.** The two existing `/unfiled` assertions in `classification.smoke.test.ts` (fresh-user `total === 1` for a lone FORCE_FAIL photo; fresh-user `total === 1` for a lone duplicate; `total === 0` after reclassify-into-folder) are on fresh users who own exactly one unfiled photo each with no `done` orphans, so the broader filter leaves them unchanged — verified green. The order-independent leak test also unchanged.
