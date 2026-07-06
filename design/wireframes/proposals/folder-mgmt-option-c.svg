@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- P4 Option C: inline rename-in-place + drag-to-merge -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Organize</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="48" width="220" height="552" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="16" y="76" font-size="12" fill="#8a90a0" font-weight="bold">MY PHOTOS</text>
+  <text x="16" y="92" font-size="9" fill="#8a90a0">double-click to rename · drag onto another to merge</text>
+
+  <!-- Nature row shown in inline-rename (edit) state -->
+  <rect x="8" y="102" width="204" height="30" rx="4" fill="#ffffff" stroke="#3057d5"/>
+  <rect x="12" y="106" width="150" height="22" rx="3" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="20" y="121" font-size="12" fill="#333">Nature|</text>
+  <rect x="166" y="106" width="42" height="22" rx="3" fill="#3057d5"/>
+  <text x="176" y="121" font-size="11" fill="#ffffff">Save</text>
+
+  <!-- People row being dragged (ghost) toward Food -->
+  <rect x="8" y="140" width="204" height="28" rx="4" fill="#e8eefc" stroke="#3057d5" stroke-dasharray="3,2"/>
+  <text x="18" y="159" font-size="13" fill="#1b3a9e" font-weight="bold">People</text><text x="188" y="159" font-size="12" fill="#1b3a9e">34</text>
+  <text x="150" y="159" font-size="11" fill="#8a90a0">⠿ drag</text>
+
+  <!-- Food row = drop target highlighted -->
+  <rect x="8" y="174" width="204" height="28" rx="4" fill="#e3f2e8" stroke="#3d9a5b"/>
+  <text x="18" y="193" font-size="13" fill="#3d7a52" font-weight="bold">Food</text><text x="188" y="193" font-size="12" fill="#3d7a52">12</text>
+  <text x="112" y="193" font-size="9" fill="#3d7a52">↓ drop to merge here</text>
+
+  <text x="18" y="229" font-size="13" fill="#333">Vacation 2026</text><text x="188" y="229" font-size="12" fill="#8a90a0">3</text>
+  <text x="18" y="257" font-size="13" fill="#8a90a0">Unfiled</text><text x="188" y="257" font-size="12" fill="#8a90a0">2</text>
+
+  <!-- Small right-click / trash affordance note -->
+  <line x1="8" y1="276" x2="212" y2="276" stroke="#dde1e8"/>
+  <text x="16" y="296" font-size="10" fill="#8a90a0">Right-click a folder for Delete.</text>
+
+  <!-- Main area: drag-to-merge CONFIRM dialog -->
+  <rect x="240" y="72" width="536" height="126" rx="10" fill="#ffffff" stroke="#3057d5"/>
+  <text x="260" y="98" font-size="14" fill="#222" font-weight="bold">Merge “People” into “Food”?</text>
+  <text x="260" y="118" font-size="11" fill="#8a90a0">All 34 photos from People move into Food; People is then removed.</text>
+  <rect x="260" y="130" width="496" height="30" rx="6" fill="#eef1f6"/>
+  <text x="274" y="149" font-size="11" fill="#333">Food will hold 12 + 34 = 46 photos. This can’t be undone from here.</text>
+  <rect x="260" y="166" width="120" height="26" rx="5" fill="#3057d5"/>
+  <text x="278" y="184" font-size="12" fill="#ffffff" font-weight="bold">Merge folders</text>
+  <rect x="388" y="166" width="70" height="26" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="406" y="184" font-size="12" fill="#5a6070">Cancel</text>
+
+  <!-- F1 shared-block state -->
+  <rect x="240" y="214" width="536" height="96" rx="10" fill="#f3e2e2" stroke="#e2b6b6"/>
+  <rect x="240" y="214" width="6" height="96" rx="3" fill="#c46b6b"/>
+  <text x="260" y="240" font-size="13" fill="#9a5555" font-weight="bold">Can’t merge — “People” is shared with a guest</text>
+  <text x="260" y="262" font-size="11" fill="#9a5555">People is shared with studio@bride.co. Revoke the share first, then drag to merge.</text>
+  <text x="260" y="280" font-size="10" fill="#9a5555">Server returned 409. The drag was cancelled; nothing moved.</text>
+  <rect x="260" y="286" width="130" height="20" rx="4" fill="#ffffff" stroke="#c46b6b"/>
+  <text x="272" y="300" font-size="11" fill="#9a5555" font-weight="bold">Go to Guests →</text>
+
+  <!-- Delete confirm (right-click) -->
+  <rect x="240" y="326" width="536" height="116" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="260" y="352" font-size="14" fill="#222" font-weight="bold">Delete “Vacation 2026”?</text>
+  <rect x="260" y="364" width="496" height="40" rx="6" fill="#eef1f6"/>
+  <text x="274" y="380" font-size="11" fill="#333" font-weight="bold">The 3 photos here will move to Unfiled — they are not deleted.</text>
+  <text x="274" y="396" font-size="10" fill="#8a90a0">Only the folder is removed; the originals stay in your library.</text>
+  <rect x="260" y="410" width="120" height="26" rx="5" fill="#b05555"/>
+  <text x="278" y="428" font-size="12" fill="#ffffff" font-weight="bold">Delete folder</text>
+  <rect x="388" y="410" width="70" height="26" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="406" y="428" font-size="12" fill="#5a6070">Cancel</text>
+
+  <!-- Footnote -->
+  <text x="240" y="560" font-size="10" fill="#8a90a0">Option C — direct manipulation: double-click a folder to rename in place, drag one folder onto another to merge (confirm dialog),</text>
+  <text x="240" y="574" font-size="10" fill="#8a90a0">right-click for Delete. Fewest clicks / most fluid, but least discoverable and the trickiest to build; same F1-block and Unfiled confirms apply.</text>
+</svg>
