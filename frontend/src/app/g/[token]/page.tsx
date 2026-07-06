@@ -31,6 +31,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   ApiError,
+  downloadAllApi,
   GuestFolder,
   FolderPhoto,
   guestPortalApi,
@@ -248,6 +249,14 @@ export default function GuestPortalPage() {
 
   const selectedFolder = folders.find((f) => f.id === selectedFolderId) ?? null;
   const canDownload = selectedFolder ? selectedFolder.permissionLevel !== "view" : false;
+  // P5 (Z1): the bulk "Download all" button is shown ONLY when this guest's
+  // permission on the selected folder is exactly `download_all` - the level the
+  // guest /folders response already exposes per folder. A `download`- or
+  // `view`-only guest never sees it (and the backend would 403 anyway). The
+  // click is a credentialed top-level navigation to the guest streaming
+  // endpoint (Content-Disposition: attachment) so the browser saves the zip -
+  // NOT a fetch-into-memory; the guest-session cookie rides the navigation.
+  const canDownloadAll = selectedFolder?.permissionLevel === "download_all";
 
   // ---- Photo detail viewer (minimal guest-scoped equivalent - see report
   // for why PhotoViewer wasn't reused directly) ----
@@ -411,6 +420,16 @@ export default function GuestPortalPage() {
                     <span style={{ fontSize: 12, color: "#8a90a0" }}>
                       {selectedFolder.permissionLevel === "view" ? "View only" : "Download access"}
                     </span>
+                    {canDownloadAll && selectedFolder.photoCount > 0 && (
+                      <button
+                        type="button"
+                        className="portal-download-btn portal-downloadall-btn"
+                        data-testid="portal-download-all"
+                        onClick={() => window.location.assign(downloadAllApi.guestFolderUrl(selectedFolder.id))}
+                      >
+                        Download all
+                      </button>
+                    )}
                   </div>
                 )}
 

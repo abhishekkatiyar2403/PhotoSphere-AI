@@ -20,6 +20,7 @@ import {
   ApiError,
   authApi,
   collectionsApi,
+  downloadAllApi,
   Folder,
   FolderPhoto,
   folderPhotosApi,
@@ -310,6 +311,20 @@ function BrowsePageInner() {
               <div className="organize-main-header">
                 <h2>{selectedFolder.name}</h2>
                 <span>— {selectedFolder.photoCount} photos</span>
+                {/* P5: owner "Download all" - real folders only (not the virtual
+                    Unfiled bucket), and only when the folder has photos. A
+                    credentialed top-level navigation to the streaming endpoint
+                    (Content-Disposition: attachment) so the browser saves it. */}
+                {!selectedIsUnfiled && selectedFolder.photoCount > 0 && (
+                  <button
+                    type="button"
+                    className="organize-downloadall-btn"
+                    data-testid="browse-download-all"
+                    onClick={() => window.location.assign(downloadAllApi.ownerFolderUrl(selectedFolder.id))}
+                  >
+                    Download all
+                  </button>
+                )}
               </div>
 
               {gridError && <p className="organize-new-folder-error">{gridError}</p>}

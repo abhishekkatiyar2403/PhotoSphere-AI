@@ -27,11 +27,13 @@
 // whether a collection/folder has ever been created.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ApiError,
   authApi,
   collectionsApi,
+  downloadAllApi,
   Folder,
   FolderPhoto,
   folderPhotosApi,
@@ -88,6 +90,29 @@ export default function OrganizePage() {
   // /browse, confirming "reachable from any grid" rather than being
   // /browse-specific.
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+
+  // ---- P4 folder management (rename / merge / delete via a per-folder kebab
+  // menu, design/wireframes/folder-mgmt.svg Option A). openMenuFolderId tracks
+  // which row's kebab menu is open; renamingFolderId tracks the inline-edit
+  // row. mergeDialog / deleteDialog hold the folder each modal targets. Each
+  // op refreshes the tree + counts on success; the F1 409 shared-block and the
+  // rename 409 collision are surfaced inline in their respective surfaces. ----
+  const [openMenuFolderId, setOpenMenuFolderId] = useState<string | null>(null);
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [renameBusy, setRenameBusy] = useState(false);
+
+  const [mergeDialogFolder, setMergeDialogFolder] = useState<Folder | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState("");
+  const [mergeError, setMergeError] = useState<string | null>(null);
+  const [mergeBlocked, setMergeBlocked] = useState(false); // F1 shared-with-guest 409
+  const [mergeBusy, setMergeBusy] = useState(false);
+
+  const [deleteDialogFolder, setDeleteDialogFolder] = useState<Folder | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteBlocked, setDeleteBlocked] = useState(false); // F1 shared-with-guest 409
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   // Guards against stale async responses clobbering newer state - e.g.
   // switching folders quickly, or a reclassify poll resolving after the
@@ -327,6 +352,170 @@ export default function OrganizePage() {
     }
   }
 
+  // ---- P4: refresh the sidebar tree + counts after a merge/delete. Reuses
+  // loadFolders (which refetches both the folder list and the Unfiled count) so
+  // a merge/delete's downstream effects - target count bumped, source gone,
+  // delete's photos now in Unfiled - all reconcile from the server, no manual
+  // count math. If the currently-selected folder was the one removed, fall back
+  // to the first remaining folder (or Unfiled). ----
+  async function refreshTreeAfter(removedFolderId: string) {
+    const remaining = await loadFolders(collectionIdRef.current);
+    if (selectedFolderIdRef.current === removedFolderId) {
+      setSelectedFolderId(remaining[0]?.id ?? UNFILED_FOLDER_ID);
+    }
+  }
+
+  // ---- P4 Rename: inline edit on the folder row. 409 collision → inline
+  // message; empty → validated/disabled before any request. ----
+  function startRename(folder: Folder) {
+    setOpenMenuFolderId(null);
+    setRenamingFolderId(folder.id);
+    setRenameDraft(folder.name);
+    setRenameError(null);
+  }
+
+  function cancelRename() {
+    setRenamingFolderId(null);
+    setRenameDraft("");
+    setRenameError(null);
+    setRenameBusy(false);
+  }
+
+  async function commitRename(folder: Folder) {
+    const name = renameDraft.trim();
+    if (!name) {
+      setRenameError("Folder name is required");
+      return;
+    }
+    if (name === folder.name) {
+      cancelRename();
+      return;
+    }
+    setRenameBusy(true);
+    setRenameError(null);
+    try {
+      const updated = await foldersApi.rename(folder.id, name);
+      setFolders((prev) =>
+        prev.map((f) => (f.id === folder.id ? { ...f, name: updated.name } : f)).sort((a, b) => a.name.localeCompare(b.name)),
+      );
+      cancelRename();
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      if (err instanceof ApiError && err.status === 409) {
+        setRenameError("A folder with that name already exists");
+      } else if (err instanceof ApiError && err.status === 400) {
+        setRenameError(err.message || "Invalid folder name");
+      } else {
+        setRenameError(err instanceof Error ? err.message : "Rename failed");
+      }
+      setRenameBusy(false);
+    }
+  }
+
+  // ---- P4 Merge: open the dialog for a source folder; the destination is
+  // picked from the owner's OTHER folders in the same collection. 409 (F1)
+  // shows the shared-with-guest block; success refreshes the tree. ----
+  function openMergeDialog(folder: Folder) {
+    setOpenMenuFolderId(null);
+    setMergeDialogFolder(folder);
+    setMergeTargetId("");
+    setMergeError(null);
+    setMergeBlocked(false);
+    setMergeBusy(false);
+  }
+
+  function closeMergeDialog() {
+    setMergeDialogFolder(null);
+    setMergeTargetId("");
+    setMergeError(null);
+    setMergeBlocked(false);
+    setMergeBusy(false);
+  }
+
+  async function confirmMerge() {
+    if (!mergeDialogFolder || !mergeTargetId) return;
+    const source = mergeDialogFolder;
+    setMergeBusy(true);
+    setMergeError(null);
+    setMergeBlocked(false);
+    try {
+      await foldersApi.merge(source.id, mergeTargetId);
+      closeMergeDialog();
+      await refreshTreeAfter(source.id);
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      if (err instanceof ApiError && err.status === 409) {
+        // F1: the source folder is shared with a guest - revoke first.
+        setMergeBlocked(true);
+      } else if (err instanceof ApiError && err.status === 400) {
+        setMergeError(err.message || "Cannot merge these folders");
+      } else {
+        setMergeError(err instanceof Error ? err.message : "Merge failed");
+      }
+      setMergeBusy(false);
+    }
+  }
+
+  // ---- P4 Delete: confirm dialog with the "photos move to Unfiled" copy. 409
+  // (F1) shows the shared-with-guest block; success refreshes the tree (the
+  // deleted folder's photos now surface in the Unfiled bucket). ----
+  function openDeleteDialog(folder: Folder) {
+    setOpenMenuFolderId(null);
+    setDeleteDialogFolder(folder);
+    setDeleteError(null);
+    setDeleteBlocked(false);
+    setDeleteBusy(false);
+  }
+
+  function closeDeleteDialog() {
+    setDeleteDialogFolder(null);
+    setDeleteError(null);
+    setDeleteBlocked(false);
+    setDeleteBusy(false);
+  }
+
+  async function confirmDelete() {
+    if (!deleteDialogFolder) return;
+    const folder = deleteDialogFolder;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    setDeleteBlocked(false);
+    try {
+      await foldersApi.remove(folder.id);
+      closeDeleteDialog();
+      await refreshTreeAfter(folder.id);
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      if (err instanceof ApiError && err.status === 409) {
+        setDeleteBlocked(true);
+      } else {
+        setDeleteError(err instanceof Error ? err.message : "Delete failed");
+      }
+      setDeleteBusy(false);
+    }
+  }
+
+  // ---- P5: trigger a browser download of the owner folder zip. A credentialed
+  // top-level navigation to the streaming endpoint (Content-Disposition:
+  // attachment) so the browser SAVES the file - NOT a fetch-into-memory. The
+  // owner session cookie rides the same-origin navigation automatically. An
+  // empty/too-large folder returns 400/409, which the browser would show as a
+  // JSON body in a new context; we pre-guard the obvious empty case by hiding
+  // the button when the folder has 0 photos. ----
+  function handleDownloadAll(folderId: string) {
+    setOpenMenuFolderId(null);
+    window.location.assign(downloadAllApi.ownerFolderUrl(folderId));
+  }
+
   // ---- Move a photo to another folder (only offered on real-folder cards,
   // never on Unfiled's failed/duplicate cards - those use Reclassify) ----
   async function handleMove(photoId: string, targetFolderId: string) {
@@ -539,16 +728,121 @@ export default function OrganizePage() {
 
           <ul className="organize-folder-list">
             {folders.map((folder) => (
-              <li key={folder.id}>
-                <button
-                  type="button"
-                  data-testid={`folder-row-${folder.name}`}
-                  className={`organize-folder-row${folder.id === selectedFolderId ? " active" : ""}`}
-                  onClick={() => setSelectedFolderId(folder.id)}
-                >
-                  <span>{folder.name}</span>
-                  <span className="count">{folder.photoCount}</span>
-                </button>
+              <li key={folder.id} className="organize-folder-item">
+                {renamingFolderId === folder.id ? (
+                  // Inline rename edit - replaces the row while active.
+                  <div className="organize-rename-row">
+                    <input
+                      type="text"
+                      autoFocus
+                      className="organize-rename-input"
+                      data-testid={`rename-input-${folder.id}`}
+                      value={renameDraft}
+                      disabled={renameBusy}
+                      onChange={(e) => {
+                        setRenameDraft(e.target.value);
+                        if (renameError) setRenameError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitRename(folder);
+                        if (e.key === "Escape") cancelRename();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="organize-rename-save"
+                      data-testid={`rename-save-${folder.id}`}
+                      disabled={renameBusy || !renameDraft.trim()}
+                      onClick={() => commitRename(folder)}
+                    >
+                      {renameBusy ? "…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      className="organize-rename-cancel"
+                      data-testid={`rename-cancel-${folder.id}`}
+                      disabled={renameBusy}
+                      onClick={cancelRename}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <div className="organize-folder-rowwrap">
+                    <button
+                      type="button"
+                      data-testid={`folder-row-${folder.name}`}
+                      className={`organize-folder-row${folder.id === selectedFolderId ? " active" : ""}`}
+                      onClick={() => setSelectedFolderId(folder.id)}
+                    >
+                      <span>{folder.name}</span>
+                      <span className="count">{folder.photoCount}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="organize-kebab"
+                      data-testid={`folder-kebab-${folder.id}`}
+                      aria-label={`Folder actions for ${folder.name}`}
+                      aria-haspopup="menu"
+                      aria-expanded={openMenuFolderId === folder.id}
+                      onClick={() =>
+                        setOpenMenuFolderId((prev) => (prev === folder.id ? null : folder.id))
+                      }
+                    >
+                      ⋯
+                    </button>
+                    {openMenuFolderId === folder.id && (
+                      <div
+                        className="organize-kebab-menu"
+                        role="menu"
+                        data-testid={`folder-menu-${folder.id}`}
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="organize-kebab-item"
+                          data-testid={`folder-menu-rename-${folder.id}`}
+                          onClick={() => startRename(folder)}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="organize-kebab-item"
+                          data-testid={`folder-menu-merge-${folder.id}`}
+                          onClick={() => openMergeDialog(folder)}
+                        >
+                          Merge into…
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="organize-kebab-item"
+                          data-testid={`folder-menu-download-${folder.id}`}
+                          disabled={folder.photoCount === 0}
+                          onClick={() => handleDownloadAll(folder.id)}
+                        >
+                          Download all
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="organize-kebab-item organize-kebab-danger"
+                          data-testid={`folder-menu-delete-${folder.id}`}
+                          onClick={() => openDeleteDialog(folder)}
+                        >
+                          Delete folder
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {renamingFolderId === folder.id && renameError && (
+                  <p className="organize-new-folder-error" data-testid={`rename-error-${folder.id}`}>
+                    {renameError}
+                  </p>
+                )}
               </li>
             ))}
             {unfiledCount > 0 && (
@@ -603,6 +897,18 @@ export default function OrganizePage() {
               <div className="organize-main-header">
                 <h2>{selectedFolder.name}</h2>
                 <span>— {selectedFolder.photoCount} photos</span>
+                {/* P5: owner "Download all" - real folders only (not the virtual
+                    Unfiled bucket), and only when the folder has photos. */}
+                {!selectedIsUnfiled && selectedFolder.photoCount > 0 && (
+                  <button
+                    type="button"
+                    className="organize-downloadall-btn"
+                    data-testid="organize-download-all"
+                    onClick={() => handleDownloadAll(selectedFolder.id)}
+                  >
+                    Download all
+                  </button>
+                )}
               </div>
 
               {gridError && <p className="organize-new-folder-error">{gridError}</p>}
@@ -653,6 +959,167 @@ export default function OrganizePage() {
           onIndexChange={setViewerIndex}
           onClose={() => setViewerIndex(null)}
         />
+      )}
+
+      {/* P4 Merge dialog. Destination = the owner's OTHER folders in this
+          collection (all `folders` minus the source). Shows the consequence
+          copy; the F1 409 flips to the shared-with-guest block. */}
+      {mergeDialogFolder && (
+        <div
+          className="organize-modal-backdrop"
+          data-testid="merge-dialog"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !mergeBusy) closeMergeDialog();
+          }}
+        >
+          <div className="organize-modal">
+            {mergeBlocked ? (
+              <div className="organize-shared-block" data-testid="merge-shared-block">
+                <h3>Can&apos;t merge — this folder is shared with a guest</h3>
+                <p>
+                  “{mergeDialogFolder.name}” is currently shared with a guest. Revoke the share first, then merge.
+                </p>
+                <p className="organize-shared-block-sub">Server returned 409. Nothing was moved or deleted.</p>
+                <div className="organize-modal-actions">
+                  <Link href="/guests" className="organize-shared-block-link" data-testid="merge-goto-guests">
+                    Go to Guests →
+                  </Link>
+                  <button type="button" className="organize-modal-cancel" onClick={closeMergeDialog}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h3>Merge “{mergeDialogFolder.name}” into another folder</h3>
+                <p className="organize-modal-sub">
+                  All {mergeDialogFolder.photoCount} photos move to the destination; “{mergeDialogFolder.name}” is
+                  then removed.
+                </p>
+                <label className="activity-filter-label" htmlFor="merge-target-select">
+                  DESTINATION
+                </label>
+                <select
+                  id="merge-target-select"
+                  className="activity-select organize-merge-select"
+                  data-testid="merge-target-select"
+                  value={mergeTargetId}
+                  disabled={mergeBusy}
+                  onChange={(e) => setMergeTargetId(e.target.value)}
+                >
+                  <option value="" disabled>
+                    Choose a destination folder…
+                  </option>
+                  {folders
+                    .filter((f) => f.id !== mergeDialogFolder.id)
+                    .map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name} — {f.photoCount} photos
+                      </option>
+                    ))}
+                </select>
+                {folders.filter((f) => f.id !== mergeDialogFolder.id).length === 0 && (
+                  <p className="organize-modal-sub">You have no other folder to merge into. Create one first.</p>
+                )}
+                {mergeError && (
+                  <p className="organize-new-folder-error" data-testid="merge-error">
+                    {mergeError}
+                  </p>
+                )}
+                <div className="organize-modal-actions">
+                  <button
+                    type="button"
+                    className="organize-modal-confirm"
+                    data-testid="merge-confirm"
+                    disabled={mergeBusy || !mergeTargetId}
+                    onClick={confirmMerge}
+                  >
+                    {mergeBusy ? "Merging…" : "Merge folders"}
+                  </button>
+                  <button
+                    type="button"
+                    className="organize-modal-cancel"
+                    data-testid="merge-cancel"
+                    disabled={mergeBusy}
+                    onClick={closeMergeDialog}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* P4 Delete confirm. The reassurance copy is load-bearing: photos move to
+          Unfiled, they are NOT deleted. The F1 409 flips to the shared block. */}
+      {deleteDialogFolder && (
+        <div
+          className="organize-modal-backdrop"
+          data-testid="delete-dialog"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !deleteBusy) closeDeleteDialog();
+          }}
+        >
+          <div className="organize-modal">
+            {deleteBlocked ? (
+              <div className="organize-shared-block" data-testid="delete-shared-block">
+                <h3>Can&apos;t delete — this folder is shared with a guest</h3>
+                <p>
+                  “{deleteDialogFolder.name}” is currently shared with a guest. Revoke the share first, then delete.
+                </p>
+                <p className="organize-shared-block-sub">Server returned 409. Nothing was moved or deleted.</p>
+                <div className="organize-modal-actions">
+                  <Link href="/guests" className="organize-shared-block-link" data-testid="delete-goto-guests">
+                    Go to Guests →
+                  </Link>
+                  <button type="button" className="organize-modal-cancel" onClick={closeDeleteDialog}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h3>Delete “{deleteDialogFolder.name}”?</h3>
+                <div className="organize-delete-reassure" data-testid="delete-reassure">
+                  <p className="organize-delete-reassure-title">
+                    The {deleteDialogFolder.photoCount} photos in this folder will move to Unfiled — they are not
+                    deleted.
+                  </p>
+                  <p className="organize-delete-reassure-sub">
+                    You can re-file them any time from the Unfiled bucket. Only the folder is removed.
+                  </p>
+                </div>
+                {deleteError && (
+                  <p className="organize-new-folder-error" data-testid="delete-error">
+                    {deleteError}
+                  </p>
+                )}
+                <div className="organize-modal-actions">
+                  <button
+                    type="button"
+                    className="organize-modal-delete"
+                    data-testid="delete-confirm"
+                    disabled={deleteBusy}
+                    onClick={confirmDelete}
+                  >
+                    {deleteBusy ? "Deleting…" : "Delete folder"}
+                  </button>
+                  <button
+                    type="button"
+                    className="organize-modal-cancel"
+                    data-testid="delete-cancel"
+                    disabled={deleteBusy}
+                    onClick={closeDeleteDialog}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </main>
   );

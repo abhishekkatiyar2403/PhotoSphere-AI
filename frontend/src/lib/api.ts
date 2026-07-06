@@ -155,6 +155,33 @@ export type Folder = {
   createdAt: string;
 };
 
+// Folder rename/merge/delete (specs/folder-mgmt-download-search.md PART P4,
+// design/wireframes/folder-mgmt.svg - Option A). Thin wrappers on the live,
+// Tester-verified backend (routes/folders.ts). Same apiFetch/ApiError shape:
+// - rename: 200 (updated folder) / 409 name-collision / 400 empty / 404.
+// - merge:  200 / 409 shared-with-guest (F1) / 400 self-or-cross-collection /
+//           404. On 200 the source folder is removed and its photos live in
+//           the target; the caller refreshes the tree + counts.
+// - remove: 200 { deleted, photosOrphaned } / 409 shared-with-guest (F1) / 404.
+//           On 200 the folder's photos become Unfiled (folderId = null) - they
+//           are NOT deleted - so the caller refreshes the tree + Unfiled count.
+export type RenamedFolder = {
+  id: string;
+  name: string;
+  categoryType: "ai_generated" | "custom";
+  photoCount: number;
+  collectionId: string;
+};
+
+export type MergeFolderResponse = {
+  merged: true;
+  targetFolderId: string;
+  photosMoved: number;
+  targetPhotoCount: number;
+};
+
+export type DeleteFolderResponse = { deleted: true; photosOrphaned: number };
+
 export const foldersApi = {
   list: (collectionId: string): Promise<{ folders: Folder[] }> =>
     apiFetch(`/api/collections/${collectionId}/folders`, { method: "GET" }),
@@ -163,6 +190,32 @@ export const foldersApi = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
+  rename: (id: string, name: string): Promise<RenamedFolder> =>
+    apiFetch(`/api/folders/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  merge: (id: string, targetFolderId: string): Promise<MergeFolderResponse> =>
+    apiFetch(`/api/folders/${id}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ targetFolderId }),
+    }),
+  remove: (id: string): Promise<DeleteFolderResponse> =>
+    apiFetch(`/api/folders/${id}`, { method: "DELETE" }),
+};
+
+// Bulk "download all" (specs/folder-mgmt-download-search.md PART P5). Both
+// endpoints STREAM a zip with Content-Disposition: attachment - the browser
+// should SAVE the file, so this is deliberately NOT an apiFetch (which reads
+// the body into JS): it returns the absolute, credentialed URL the caller
+// navigates/anchors the browser to (a normal authenticated GET the browser
+// saves). credentials ride via the same-origin cookie on a top-level
+// navigation / an <a> click. The owner endpoint uses the owner session cookie;
+// the guest endpoint uses the guest-session cookie - both round-trip
+// automatically on a browser navigation to API_BASE_URL, exactly as
+// credentials:"include" does for apiFetch.
+export const downloadAllApi = {
+  ownerFolderUrl: (folderId: string): string =>
+    `${API_BASE_URL}/api/folders/${folderId}/download-all`,
+  guestFolderUrl: (folderId: string): string =>
+    `${API_BASE_URL}/api/guest/folders/${folderId}/download-all`,
 };
 
 export type FolderPhoto = {
@@ -423,5 +476,65 @@ export const auditApi = {
     if (params.to) qs.set("to", params.to);
     const q = qs.toString();
     return apiFetch(`/api/audit${q ? `?${q}` : ""}`, { method: "GET" });
+  },
+};
+
+// --- Basic search (specs/folder-mgmt-download-search.md PART P6,
+// design/wireframes/search.svg - Option A: dedicated /search page). Owner-
+// scoped GET /api/search over the caller's own library by filename substring,
+// createdAt date range, folder, and category. Same apiFetch/ApiError shape;
+// results are photo cards with pre-signed 60s thumbnails (never a raw key) -
+// the SAME FolderPhoto/{photos,total,limit,offset} shape as
+// GET /api/folders/:id/photos, so the /search grid reuses the existing card.
+// A bare search (no filters) returns the whole library newest-first (S6). A
+// bad limit/date/category → 400 (surfaced as an ApiError). folderId accepts a
+// real folder UUID, the reserved literal "unfiled" (folderId = null photos),
+// or is omitted for "all folders".
+
+// The 8 categories the backend accepts (matched against the owner's own folder
+// names, S1). Kept as a const tuple so the /search dropdown and the type stay
+// in lockstep. "unfiled" is a folderId literal, not a category.
+export const SEARCH_CATEGORIES = [
+  "People",
+  "Nature",
+  "Animals",
+  "Food",
+  "Vehicles",
+  "Documents",
+  "Screenshots",
+  "Uncategorized",
+] as const;
+
+export type SearchCategory = (typeof SEARCH_CATEGORIES)[number];
+
+export type SearchParams = {
+  q?: string;
+  from?: string; // ISO date (YYYY-MM-DD accepted by the backend)
+  to?: string; // ISO date
+  folderId?: string; // a folder UUID, or the literal "unfiled"
+  category?: SearchCategory;
+  limit?: number;
+  offset?: number;
+};
+
+export type SearchResponse = {
+  photos: FolderPhoto[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export const searchApi = {
+  search: (params: SearchParams = {}): Promise<SearchResponse> => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set("q", params.q);
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (params.folderId) qs.set("folderId", params.folderId);
+    if (params.category) qs.set("category", params.category);
+    if (params.limit != null) qs.set("limit", String(params.limit));
+    if (params.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return apiFetch(`/api/search${q ? `?${q}` : ""}`, { method: "GET" });
   },
 };

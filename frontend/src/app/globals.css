@@ -1892,3 +1892,380 @@ body {
     display: none;
   }
 }
+
+/* --- P4 folder management: per-folder kebab menu + inline rename + merge/
+   delete modals (design/wireframes/folder-mgmt.svg, Option A). Extends the
+   existing .organize-* sidebar patterns. --- */
+.organize-folder-item {
+  position: relative;
+}
+
+.organize-folder-rowwrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* The row button sits under the kebab; give it room so a long name doesn't
+   collide with the ⋯. */
+.organize-folder-rowwrap .organize-folder-row {
+  padding-right: 30px;
+}
+
+.organize-kebab {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: none;
+  color: var(--color-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+/* Reveal the kebab on row hover or when its menu is open (aria-expanded). */
+.organize-folder-item:hover .organize-kebab,
+.organize-kebab[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.organize-kebab:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.organize-kebab-menu {
+  position: absolute;
+  right: 4px;
+  top: calc(100% - 2px);
+  z-index: 20;
+  min-width: 150px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.14);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.organize-kebab-item {
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 7px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.organize-kebab-item:hover:not(:disabled) {
+  background: #e8eefc;
+  color: #1b3a9e;
+}
+
+.organize-kebab-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.organize-kebab-danger {
+  color: #9a5555;
+}
+
+.organize-kebab-danger:hover:not(:disabled) {
+  background: #f3e2e2;
+  color: #9a5555;
+}
+
+/* Inline rename edit (replaces the row while active). */
+.organize-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.organize-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--color-primary);
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.organize-rename-save,
+.organize-rename-cancel {
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 8px;
+}
+
+.organize-rename-save {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+  font-weight: 600;
+}
+
+.organize-rename-save:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* P5 "Download all" button on the owner folder header (/organize + /browse). */
+.organize-downloadall-btn {
+  margin-left: auto;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--color-primary);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.organize-downloadall-btn:hover {
+  background: #e8eefc;
+}
+
+/* Merge / delete modals. */
+.organize-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(16, 24, 40, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.organize-modal {
+  width: 100%;
+  max-width: 480px;
+  background: var(--color-surface);
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  padding: 22px 24px;
+  box-shadow: 0 12px 40px rgba(16, 24, 40, 0.25);
+}
+
+.organize-modal h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+
+.organize-modal-sub {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.organize-merge-select {
+  width: 100%;
+  margin: 6px 0 4px;
+}
+
+.organize-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.organize-modal-confirm,
+.organize-modal-delete,
+.organize-modal-cancel {
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.organize-modal-confirm {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.organize-modal-confirm:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.organize-modal-delete {
+  background: #b05555;
+  color: #fff;
+}
+
+.organize-modal-delete:hover:not(:disabled) {
+  background: #9a4747;
+}
+
+.organize-modal-confirm:disabled,
+.organize-modal-delete:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.organize-modal-cancel {
+  background: var(--color-surface);
+  color: var(--color-muted);
+  border-color: var(--color-border);
+}
+
+.organize-modal-cancel:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+
+/* Delete reassurance callout (F2: photos move to Unfiled). */
+.organize-delete-reassure {
+  background: var(--color-bg);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.organize-delete-reassure-title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.organize-delete-reassure-sub {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+/* F1 shared-with-guest 409 block (merge + delete). */
+.organize-shared-block {
+  border-left: 4px solid #c46b6b;
+  background: #f3e2e2;
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+
+.organize-shared-block h3 {
+  margin: 0 0 8px;
+  color: #9a5555;
+  font-size: 15px;
+}
+
+.organize-shared-block p {
+  margin: 0 0 6px;
+  color: #9a5555;
+  font-size: 12px;
+}
+
+.organize-shared-block-sub {
+  font-size: 11px !important;
+  opacity: 0.85;
+}
+
+.organize-shared-block-link {
+  color: #9a5555;
+  font-weight: 700;
+  font-size: 12px;
+  text-decoration: none;
+  border: 1px solid #c46b6b;
+  border-radius: 4px;
+  padding: 6px 12px;
+  background: var(--color-surface);
+}
+
+.organize-shared-block-link:hover {
+  background: #fff;
+}
+
+/* --- P6 search page (design/wireframes/search.svg, Option A: dedicated
+   /search page). Reuses the .activity-* filter-bar patterns and the
+   .organize-grid photo cards. --- */
+.search-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.search-content {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.search-filename-input {
+  min-width: 220px;
+}
+
+.search-clear {
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.search-clear:hover {
+  background: var(--color-bg);
+}
+
+.search-results-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 4px 0 14px;
+}
+
+.search-results-count {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.search-empty {
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  padding: 40px 24px;
+  text-align: center;
+  background: var(--color-surface);
+}
+
+.search-empty-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.search-empty-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+/* P5 guest "Download all" button on the portal folder header. */
+.portal-downloadall-btn {
+  margin-left: 12px;
+}

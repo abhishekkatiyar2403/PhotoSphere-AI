@@ -253,6 +253,9 @@ export default function ActivityPage() {
       <div className="organize-topbar">
         <h1>PhotoSphere AI — Activity</h1>
         <div className="dashboard-topbar-right">
+          <Link href="/search" className="dashboard-guests-link" data-testid="activity-search-link">
+            Search
+          </Link>
           <Link href="/guests" className="dashboard-guests-link" data-testid="activity-guests-link">
             Guests
           </Link>
