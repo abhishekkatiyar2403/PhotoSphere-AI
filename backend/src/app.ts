@@ -13,6 +13,7 @@ import guestsRouter from "./routes/guests";
 import invitesRouter from "./routes/invites";
 import photosRouter from "./routes/photos";
 import searchRouter from "./routes/search";
+import trashRouter from "./routes/trash";
 
 export function createApp() {
   const app = express();
@@ -78,6 +79,10 @@ export function createApp() {
   // Basic search (specs/folder-mgmt-download-search.md PART P6). Owner-scoped
   // single top-level GET, no :id shadowing hazard. No audit (S7).
   app.use("/api/search", searchRouter);
+  // Trash surface (specs/trash-system.md): list + permanent-purge-one +
+  // empty-trash. Owner-only; DELETE /api/photos|folders/:id are SOFT deletes
+  // now, this router owns the irreversible operations.
+  app.use("/api/trash", trashRouter);
 
   // Global error handler - catches anything forwarded via next(err),
   // including async route rejections (see lib/asyncHandler.ts), so a

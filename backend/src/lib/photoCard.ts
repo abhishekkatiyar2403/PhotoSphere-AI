@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { getPresignedGetUrl } from "./storage";
-import { thumbnailKey } from "../routes/photos";
+import { thumbnailKey } from "./storageKeys";
 
 /**
  * Shared select + shape for a "list photos as cards" response. Used by
@@ -10,6 +10,16 @@ import { thumbnailKey } from "../routes/photos";
  * lockstep. Pulled out of routes/folders.ts into its own module (rather than
  * routes/photos.ts importing from routes/folders.ts, or vice versa) to avoid
  * a circular import between the two route files.
+ *
+ * specs/trash-system.md: `thumbnailKey` is imported directly from
+ * lib/storageKeys.ts (not re-exported via routes/photos.ts) — routes/photos.ts
+ * now imports `computePurgeAt`/`restoreFolderInternal` FROM routes/folders.ts
+ * (photo-restore's auto-cascade into a trashed folder's restore), and
+ * routes/folders.ts imports PHOTO_CARD_SELECT/toPhotoCard from THIS module —
+ * so this module importing back from routes/photos.ts would complete a real
+ * circular chain (photos.ts -> folders.ts -> photoCard.ts -> photos.ts).
+ * storageKeys.ts has zero route-file dependents already, so this is the
+ * correct place to break the cycle rather than papering over it.
  */
 export const PHOTO_CARD_SELECT = {
   id: true,

@@ -5,10 +5,16 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logAudit } from "../lib/audit";
 import { preflightFolderDownload } from "../lib/folderDownload";
 import { streamFolderZip } from "../lib/folderZip";
+import { hasLivePermission } from "../lib/guestShareGuard";
 import { PHOTO_CARD_SELECT, toPhotoCard } from "../lib/photoCard";
 import { prisma } from "../lib/prisma";
 import { serializableTransaction } from "../lib/serializableTransaction";
-import { folderMergeSchema, folderPhotosQuerySchema, folderRenameSchema } from "../lib/validation";
+import {
+  folderMergeSchema,
+  folderPhotosQuerySchema,
+  folderRenameSchema,
+  folderRestoreSchema,
+} from "../lib/validation";
 import { requireAuth } from "../middleware/requireAuth";
 
 /**
@@ -21,10 +27,20 @@ import { requireAuth } from "../middleware/requireAuth";
  * file, routes/collections.ts, and routes/photos.ts's new GET
  * /api/photos/unfiled) - kept re-exported below for anything still
  * importing them from here.
+ *
+ * specs/trash-system.md: F1 (hasLivePermission) is promoted to
+ * lib/guestShareGuard.ts (shared with routes/photos.ts's T2 guard). Folder
+ * delete is now a SOFT delete (sets deletedAt); GET /:id/photos, rename,
+ * merge, and download-all all gained trash-exclusion checks (listing-query
+ * audit rows #4, #5, #6, #20).
  */
 const router = Router();
 
 // GET /api/folders/:id/photos — paginated, newest first.
+// specs/trash-system.md audit row #4: 404 the whole request if the FOLDER
+// itself is trashed (matches #2/#7's "trashed = doesn't exist to normal
+// views" treatment); additionally filter the photo query to deletedAt: null
+// (an individual photo could be soft-deleted while its folder is still live).
 router.get(
   "/:id/photos",
   requireAuth,
@@ -40,19 +56,21 @@ router.get(
     }
 
     // Ownership check via folder -> collection -> ownerId. 404, never 403 -
-    // never confirm a foreign folder exists.
+    // never confirm a foreign folder exists. Also 404 if the folder is
+    // trashed (audit row #4).
     const folder = await prisma.folder.findUnique({
       where: { id: req.params.id },
       include: { collection: { select: { ownerId: true } } },
     });
-    if (!folder || folder.collection.ownerId !== req.user!.id) {
+    if (!folder || folder.collection.ownerId !== req.user!.id || folder.deletedAt != null) {
       return res.status(404).json({ error: "Folder not found" });
     }
 
+    const where = { folderId: folder.id, deletedAt: null };
     const [total, photos] = await prisma.$transaction([
-      prisma.photo.count({ where: { folderId: folder.id } }),
+      prisma.photo.count({ where }),
       prisma.photo.findMany({
-        where: { folderId: folder.id },
+        where,
         orderBy: { createdAt: "desc" },
         skip: query.offset,
         take: query.limit,
@@ -73,31 +91,14 @@ router.get(
 
 // ---------------------------------------------------------------------------
 // PART P4 — folder rename / merge / delete (specs/folder-mgmt-download-search.md)
+// specs/trash-system.md REVISES delete (soft, see below) and adds
+// trash-exclusion checks to rename/merge/download-all/list.
 // ---------------------------------------------------------------------------
-
-/**
- * F1 load-bearing guard. Returns true if the folder has ANY live guest
- * `folder_permission` — revokedAt null AND (expiresAt null OR in the future).
- * Merge and delete BOTH run this FIRST and block with 409 while a live share
- * points at the folder, so a shared folder is never silently merged-away
- * (privilege escalation) or severed. Owner revokes the share first, then
- * retries. Mirrors the "live" definition getPermittedFolderIds() enforces.
- */
-async function hasLivePermission(folderId: string): Promise<boolean> {
-  const now = new Date();
-  const live = await prisma.folderPermission.findFirst({
-    where: {
-      folderId,
-      revokedAt: null,
-      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-    },
-    select: { id: true },
-  });
-  return live != null;
-}
 
 // Resolve a folder owned by the caller, or null. Ownership via
 // folder -> collection -> ownerId (the pattern in GET /:id/photos above).
+// Does NOT exclude trashed folders by itself — callers decide (some routes,
+// like restore, need to find a TRASHED folder).
 async function findOwnedFolder(folderId: string, userId: string) {
   const folder = await prisma.folder.findUnique({
     where: { id: folderId },
@@ -107,11 +108,21 @@ async function findOwnedFolder(folderId: string, userId: string) {
   return folder;
 }
 
+// specs/trash-system.md T1 — derive, don't store purgeAt. One named
+// constant; the retention length lives here and nowhere else.
+export const TRASH_RETENTION_DAYS = 7;
+
+export function computePurgeAt(deletedAt: Date): Date {
+  return new Date(deletedAt.getTime() + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+}
+
 // PATCH /api/folders/:id — rename only (F6: reorder out of scope). Collision
-// against @@unique([collectionId, name]) → 409 from the caught P2002, NOT an
+// against the T7 partial unique index → 409 from the caught P2002, NOT an
 // app pre-check (constraint 6). Does not touch photoCount/categoryType/photos/
 // permissions. F5: allowed on both ai_generated and custom folders. No audit
 // (F4: rename is cosmetic).
+// specs/trash-system.md audit row #5: 404 if the folder is trashed (must
+// restore first).
 router.patch(
   "/:id",
   requireAuth,
@@ -127,7 +138,7 @@ router.patch(
     }
 
     const folder = await findOwnedFolder(req.params.id, req.user!.id);
-    if (!folder) {
+    if (!folder || folder.deletedAt != null) {
       return res.status(404).json({ error: "Folder not found" });
     }
 
@@ -153,6 +164,7 @@ router.patch(
 // moves). The move + BOTH counter reconciliations run in ONE
 // serializableTransaction() (constraint 5), re-deriving the moved count inside
 // the txn; then A is deleted. F4: one folder_merged audit row, post-commit.
+// specs/trash-system.md audit row #6: 404 if EITHER source or target is trashed.
 router.post(
   "/:id/merge",
   requireAuth,
@@ -172,13 +184,13 @@ router.post(
     }
 
     // BOTH sides resolved via folder -> collection -> ownerId; either not owned
-    // by the caller → 404 (never confirm a foreign folder exists).
+    // by the caller, or trashed, → 404 (never confirm a foreign folder exists).
     const source = await findOwnedFolder(req.params.id, req.user!.id);
-    if (!source) {
+    if (!source || source.deletedAt != null) {
       return res.status(404).json({ error: "Folder not found" });
     }
     const target = await findOwnedFolder(input.targetFolderId, req.user!.id);
-    if (!target) {
+    if (!target || target.deletedAt != null) {
       return res.status(404).json({ error: "Folder not found" });
     }
 
@@ -220,6 +232,8 @@ router.post(
 
       // A is now empty; delete it (no live permissions — guarded above; and
       // photos have been reparented, so no cascade takes photos with it).
+      // Merge is a non-goal for trash (specs/trash-system.md Non-goals) — the
+      // merged-away source folder is HARD-deleted immediately, unchanged.
       await tx.folder.delete({ where: { id: source.id } });
 
       return moved.count;
@@ -254,43 +268,44 @@ router.post(
   }),
 );
 
-// DELETE /api/folders/:id — delete a folder. F1 guard FIRST (409 if live-shared,
-// nothing touched). F2: photos move to Unfiled (folderId = null), NOT
-// cascade-deleted — photo rows and MinIO originals survive. Move + delete in one
-// serializableTransaction(). F4: one folder_deleted audit row, post-commit.
+// DELETE /api/folders/:id — REVISED by specs/trash-system.md (was: hard
+// delete + move-to-Unfiled). F1 guard UNCHANGED, runs FIRST (409 if
+// live-shared, nothing touched). On success, sets deletedAt = now() on the
+// FOLDER. Photos are NOT touched (T-folder-photos — they keep their folderId,
+// hidden transitively). photoCount untouched. 404 if already-trashed (audit
+// row #7). Audited (folder_deleted, metadata now notes soft/trash nature).
+// Returns { deleted, deletedAt, purgeAt } — the old photosOrphaned field is
+// GONE (nothing is orphaned anymore — this is a response-shape BREAK vs the
+// shipped P4 UI, which read photosOrphaned for its confirm copy; flagged in
+// the MR draft, frontend not touched this pass per the task scope).
 router.delete(
   "/:id",
   requireAuth,
   asyncHandler(async (req, res) => {
     const folder = await findOwnedFolder(req.params.id, req.user!.id);
-    if (!folder) {
+    if (!folder || folder.deletedAt != null) {
       return res.status(404).json({ error: "Folder not found" });
     }
 
-    // F1 GUARD FIRST.
+    // F1 GUARD FIRST — unchanged.
     if (await hasLivePermission(folder.id)) {
       return res
         .status(409)
         .json({ error: "This folder is shared with a guest — revoke the share first" });
     }
 
-    const orphaned = await serializableTransaction(async (tx) => {
-      const still = await tx.folder.findUnique({ where: { id: folder.id }, select: { id: true } });
-      if (!still) return 0;
-
-      // F2: orphan the photos to Unfiled (folderId null). collectionId is left
-      // as-is; the Unfiled surface (GET /api/photos/unfiled) scopes on
-      // folderId = null, not collectionId. Photo rows + MinIO objects untouched.
-      const moved = await tx.photo.updateMany({
-        where: { folderId: folder.id },
-        data: { folderId: null },
-      });
-
-      await tx.folder.delete({ where: { id: folder.id } });
-      return moved.count;
+    const deletedAt = new Date();
+    const updated = await prisma.folder.updateMany({
+      where: { id: folder.id, deletedAt: null },
+      data: { deletedAt },
     });
+    if (updated.count !== 1) {
+      // Raced away (trashed by a concurrent request) between the check above
+      // and here — treat as already-trashed, 404.
+      return res.status(404).json({ error: "Folder not found" });
+    }
 
-    // F4: fire-and-forget, post-commit, success-path only.
+    // F4/T6: fire-and-forget, post-commit, success-path only.
     logAudit({
       actorType: "owner",
       actorId: req.user!.id,
@@ -298,15 +313,208 @@ router.delete(
       action: "folder_deleted",
       resourceType: "folder",
       resourceId: folder.id,
-      metadata: {
-        folderName: folder.name,
-        photosOrphaned: orphaned,
-      },
+      metadata: { folderName: folder.name, soft: true, photoCount: folder.photoCount },
     });
 
-    return res.status(200).json({ deleted: true, photosOrphaned: orphaned });
+    return res
+      .status(200)
+      .json({ deleted: true, deletedAt: deletedAt.toISOString(), purgeAt: computePurgeAt(deletedAt).toISOString() });
   }),
 );
+
+// POST /api/folders/:id/restore — specs/trash-system.md FINAL DECISION 4.
+// 404 if not owned or not currently trashed. Attempt to clear deletedAt; on a
+// P2002 collision against the T7 partial unique index (a LIVE folder with the
+// same name now exists), either 409 (no onConflict), "merge" (fold into the
+// live same-named folder, reconciling photoCount, then hard-delete the
+// now-empty restored folder row), or "rename" (restore + rename in the same
+// transaction; a second collision on newName → 409 again, no retry loop).
+router.post(
+  "/:id/restore",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    let input;
+    try {
+      input = folderRestoreSchema.parse(req.body);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: err.flatten() });
+      }
+      throw err;
+    }
+
+    const folder = await findOwnedFolder(req.params.id, req.user!.id);
+    if (!folder || folder.deletedAt == null) {
+      return res.status(404).json({ error: "Folder not found" });
+    }
+
+    const result = await restoreFolderInternal(folder.id, input);
+    if (result.kind === "conflict") {
+      return res.status(409).json({
+        error: "conflict",
+        conflictingFolderId: result.conflictingFolderId,
+        conflictingFolderName: result.conflictingFolderName,
+      });
+    }
+    if (result.kind === "restored") {
+      return res.status(200).json({
+        restored: true,
+        id: result.folder.id,
+        name: result.folder.name,
+        categoryType: result.folder.categoryType,
+        photoCount: result.folder.photoCount,
+      });
+    }
+    // kind === "merged"
+    return res.status(200).json({
+      merged: true,
+      targetFolderId: result.targetFolderId,
+      photosMoved: result.photosMoved,
+      targetPhotoCount: result.targetPhotoCount,
+    });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Shared folder-restore internals — used by this route AND by
+// routes/photos.ts's photo-restore auto-cascade (specs/trash-system.md FINAL
+// DECISION 5: restoring a photo whose folder is also trashed first restores
+// the folder, recursing into this same collision handling).
+// ---------------------------------------------------------------------------
+
+export type RestoreFolderResult =
+  | { kind: "restored"; folder: { id: string; name: string; categoryType: string; photoCount: number } }
+  | { kind: "conflict"; conflictingFolderId: string; conflictingFolderName: string }
+  | { kind: "merged"; targetFolderId: string; photosMoved: number; targetPhotoCount: number };
+
+export async function restoreFolderInternal(
+  folderId: string,
+  input: { onConflict?: "merge" | "rename"; newName?: string } | undefined,
+): Promise<RestoreFolderResult> {
+  const folder = await prisma.folder.findUnique({ where: { id: folderId } });
+  if (!folder) {
+    // Shouldn't happen given the caller's own check, but stay defensive.
+    throw new Error(`restoreFolderInternal: folder ${folderId} not found`);
+  }
+
+  if (!input?.onConflict) {
+    // Plain restore attempt. No onConflict resolution requested.
+    try {
+      const restored = await prisma.folder.update({
+        where: { id: folder.id },
+        data: { deletedAt: null },
+        select: { id: true, name: true, categoryType: true, photoCount: true },
+      });
+      return { kind: "restored", folder: restored };
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        const conflicting = await findLiveConflict(folder.collectionId, folder.name, folder.id);
+        return {
+          kind: "conflict",
+          conflictingFolderId: conflicting?.id ?? "",
+          conflictingFolderName: conflicting?.name ?? folder.name,
+        };
+      }
+      throw err;
+    }
+  }
+
+  if (input.onConflict === "rename") {
+    const newName = input.newName;
+    if (!newName) {
+      // Validation should have caught this at the route level for the direct
+      // restore endpoint, but the photo-restore cascade calls this internal
+      // helper too — stay defensive rather than throw a raw TypeError.
+      const conflicting = await findLiveConflict(folder.collectionId, folder.name, folder.id);
+      return {
+        kind: "conflict",
+        conflictingFolderId: conflicting?.id ?? "",
+        conflictingFolderName: conflicting?.name ?? folder.name,
+      };
+    }
+    try {
+      const restored = await prisma.folder.update({
+        where: { id: folder.id },
+        data: { deletedAt: null, name: newName },
+        select: { id: true, name: true, categoryType: true, photoCount: true },
+      });
+      return { kind: "restored", folder: restored };
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+        const conflicting = await findLiveConflict(folder.collectionId, newName, folder.id);
+        return {
+          kind: "conflict",
+          conflictingFolderId: conflicting?.id ?? "",
+          conflictingFolderName: conflicting?.name ?? newName,
+        };
+      }
+      throw err;
+    }
+  }
+
+  // input.onConflict === "merge": find the LIVE same-named folder (the
+  // conflict target) and run the SAME merge machinery as
+  // POST /api/folders/:id/merge — move all of the restored folder's photos
+  // into it, reconcile both photoCounts, then hard-delete the now-empty
+  // restored (trashed) folder row (it's logically resolved; no need to leave
+  // a second trashed copy around).
+  const target = await findLiveConflict(folder.collectionId, folder.name, folder.id);
+  if (!target) {
+    // No actual conflict exists (caller asked for "merge" pre-emptively) —
+    // just do a plain restore.
+    const restored = await prisma.folder.update({
+      where: { id: folder.id },
+      data: { deletedAt: null },
+      select: { id: true, name: true, categoryType: true, photoCount: true },
+    });
+    return { kind: "restored", folder: restored };
+  }
+
+  const movedCount = await serializableTransaction(async (tx) => {
+    const [a, b] = await Promise.all([
+      tx.folder.findUnique({ where: { id: folder.id }, select: { id: true } }),
+      tx.folder.findUnique({ where: { id: target.id }, select: { id: true } }),
+    ]);
+    if (!a || !b) return 0;
+
+    // target is always in the SAME collection as the restored folder (found
+    // via findLiveConflict(folder.collectionId, ...)), so folder.collectionId
+    // is already the correct collectionId for the moved photos.
+    const moved = await tx.photo.updateMany({
+      where: { folderId: folder.id },
+      data: { folderId: target.id, collectionId: folder.collectionId },
+    });
+
+    if (moved.count > 0) {
+      await tx.folder.update({
+        where: { id: target.id },
+        data: { photoCount: { increment: moved.count } },
+      });
+    }
+
+    await tx.folder.delete({ where: { id: folder.id } });
+    return moved.count;
+  });
+
+  const targetAfter = await prisma.folder.findUnique({
+    where: { id: target.id },
+    select: { photoCount: true },
+  });
+
+  return {
+    kind: "merged",
+    targetFolderId: target.id,
+    photosMoved: movedCount,
+    targetPhotoCount: targetAfter?.photoCount ?? 0,
+  };
+}
+
+async function findLiveConflict(collectionId: string, name: string, excludeId: string) {
+  return prisma.folder.findFirst({
+    where: { collectionId, name, deletedAt: null, id: { not: excludeId } },
+    select: { id: true, name: true },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // PART P5 — bulk "download all" / folder zip (owner)
@@ -319,12 +527,15 @@ router.delete(
 // originals. Z6: 0 downloadable → 400. Z3: > cap → 409. ALL pre-flight checks
 // run BEFORE any byte is written so ordinary failures are clean 404/400/409.
 // No audit for the owner's own zip (Z7 / AP1: owner-on-own-data not audited).
+// specs/trash-system.md audit row #20 (the highest-flagged leak): 404 if the
+// folder itself is trashed; queryDownloadablePhotos (lib/folderDownload.ts)
+// now also excludes any individually soft-deleted photo.
 router.get(
   "/:id/download-all",
   requireAuth,
   asyncHandler(async (req, res) => {
     const folder = await findOwnedFolder(req.params.id, req.user!.id);
-    if (!folder) {
+    if (!folder || folder.deletedAt != null) {
       return res.status(404).json({ error: "Folder not found" });
     }
 
@@ -342,4 +553,4 @@ router.get(
 );
 
 export default router;
-export { PHOTO_CARD_SELECT, toPhotoCard };
+export { PHOTO_CARD_SELECT, toPhotoCard, findOwnedFolder };
