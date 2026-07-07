@@ -22,6 +22,17 @@ export const DOWNLOAD_ALL_MAX_PHOTOS = 500;
  * This SKIPS `failed` (no/partial original), `duplicate` (identical bytes to
  * an already-included original), and the in-flight `pending`/`processing`
  * (no stable original yet). Newest-first for a deterministic archive order.
+ *
+ * specs/trash-system.md audit row #20 — THE CLEAREST "existing shipped code
+ * silently becomes wrong the moment trash exists" case in the whole audit.
+ * A soft-deleted photo still has aiClassificationStatus: "done" and a real
+ * s3Key (nothing about soft-delete touches those fields) — WITHOUT the added
+ * `deletedAt: null` filter below, a trashed-but-not-yet-purged photo would
+ * remain zippable through this already-shipped, already-Tester-verified
+ * endpoint. The folder itself being trashed is checked separately by the
+ * CALLERS (routes/folders.ts, routes/guest.ts) before this is ever reached —
+ * this filter only needs to cover the photo's OWN deletedAt, since a photo
+ * can be individually soft-deleted while its folder stays live.
  */
 export async function queryDownloadablePhotos(folderId: string): Promise<ZipPhoto[]> {
   const photos = await prisma.photo.findMany({
@@ -29,6 +40,7 @@ export async function queryDownloadablePhotos(folderId: string): Promise<ZipPhot
       folderId,
       aiClassificationStatus: "done",
       s3Key: { not: "" },
+      deletedAt: null,
     },
     orderBy: { createdAt: "desc" },
     select: { s3Key: true, originalFilename: true },

@@ -40,6 +40,14 @@ export const requireGuest = asyncHandler(async (req: Request, res: Response, nex
  * This is what makes cross-scope leakage structurally impossible: a folder or
  * photo the owner owns but didn't share (or a completely different owner's
  * photo) simply isn't in the set, so it's indistinguishable from nonexistent.
+ *
+ * specs/trash-system.md audit row #15: a TRASHED folder is excluded from this
+ * set even if the guest's `folder_permission` row is still technically live
+ * (never explicitly revoked) — the OWNER trashing the folder makes it
+ * disappear from the guest's view exactly like an explicit revoke would.
+ * Filtered HERE, at the single choke point, so every downstream guest route
+ * (#16/#17/#18/#19) inherits the exclusion automatically via membership
+ * checks against this set — no per-route duplication needed.
  */
 export async function getPermittedFolderIds(guestUserId: string): Promise<Set<string>> {
   const now = new Date();
@@ -48,6 +56,7 @@ export async function getPermittedFolderIds(guestUserId: string): Promise<Set<st
       guestUserId,
       revokedAt: null,
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      folder: { deletedAt: null },
     },
     select: { folderId: true },
   });

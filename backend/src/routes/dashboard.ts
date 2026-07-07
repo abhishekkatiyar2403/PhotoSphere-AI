@@ -27,10 +27,14 @@ router.get(
         where: { id: ownerId },
         select: { storageUsedBytes: true, storageLimitBytes: true },
       }),
-      // totals.photoCount: every photo regardless of status (spec Open
+      // totals.photoCount: every LIVE photo regardless of status (spec Open
       // Question 1 default) - a library-size stat, not an org-health one.
-      prisma.photo.count({ where: { ownerId } }),
-      prisma.folder.count({ where: { collection: { ownerId } } }),
+      // specs/trash-system.md audit row #21: exclude trashed photos, else
+      // the dashboard's totals overcount relative to what's actually
+      // browsable — a stat-inflation correctness regression the moment
+      // trash exists (not a security leak, but a real bug).
+      prisma.photo.count({ where: { ownerId, deletedAt: null } }),
+      prisma.folder.count({ where: { collection: { ownerId }, deletedAt: null } }),
       prisma.collection.findMany({
         where: { ownerId },
         orderBy: { createdAt: "asc" },
@@ -56,7 +60,9 @@ router.get(
     // still null (can't happen today per the worker's atomicity, but cheap
     // to get right without trusting folder-level counters to always sum).
     const collectionPhotoCounts = await Promise.all(
-      collections.map((c) => prisma.photo.count({ where: { ownerId, collectionId: c.id } })),
+      collections.map((c) =>
+        prisma.photo.count({ where: { ownerId, collectionId: c.id, deletedAt: null } }),
+      ),
     );
 
     const usedBytes = user.storageUsedBytes;

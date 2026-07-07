@@ -77,15 +77,24 @@ router.get(
       throw err;
     }
 
+    // specs/trash-system.md audit row #16: getPermittedFolderIds (#15) already
+    // excludes a trashed folder from the permitted set, so this membership
+    // check alone already 404s a trashed folder — even though the guest's
+    // folder_permission row itself may still be technically live. Explicit
+    // per the spec's reasoning: "being in the set means 'was granted
+    // access,' not 'still visible.'" Also filter the photo query itself to
+    // deletedAt: null (an individual photo could be soft-deleted while its
+    // folder stays live).
     const permittedIds = await getPermittedFolderIds(req.guest!.guestUserId);
     if (!permittedIds.has(req.params.id)) {
       return res.status(404).json({ error: "Folder not found" });
     }
 
+    const where = { folderId: req.params.id, deletedAt: null };
     const [total, photos] = await prisma.$transaction([
-      prisma.photo.count({ where: { folderId: req.params.id } }),
+      prisma.photo.count({ where }),
       prisma.photo.findMany({
-        where: { folderId: req.params.id },
+        where,
         orderBy: { createdAt: "desc" },
         skip: query.offset,
         take: query.limit,
@@ -113,10 +122,21 @@ router.get(
   asyncHandler(async (req, res) => {
     const photo = await prisma.photo.findUnique({
       where: { id: req.params.id },
-      include: { folder: { select: { name: true } } },
+      include: { folder: { select: { name: true, deletedAt: true } } },
     });
     const permittedIds = await getPermittedFolderIds(req.guest!.guestUserId);
-    if (!photo || !photo.folderId || !permittedIds.has(photo.folderId)) {
+    // specs/trash-system.md audit row #17: 404 if the photo itself is
+    // trashed, OR its folder is trashed (folder-transitive — belt-and-
+    // suspenders alongside #15's set-level exclusion, in case a future
+    // caller ever bypasses getPermittedFolderIds), in addition to the
+    // existing permitted-set check.
+    if (
+      !photo ||
+      !photo.folderId ||
+      !permittedIds.has(photo.folderId) ||
+      photo.deletedAt != null ||
+      photo.folder?.deletedAt != null
+    ) {
       return res.status(404).json({ error: "Photo not found" });
     }
 
@@ -176,11 +196,20 @@ router.get(
   asyncHandler(async (req, res) => {
     const photo = await prisma.photo.findUnique({
       where: { id: req.params.id },
-      include: { folder: { select: { name: true } } },
+      include: { folder: { select: { name: true, deletedAt: true } } },
     });
     const guestUserId = req.guest!.guestUserId;
     const permittedIds = await getPermittedFolderIds(guestUserId);
-    if (!photo || !photo.folderId || !permittedIds.has(photo.folderId)) {
+    // specs/trash-system.md audit row #18: same trashed-checks as #17, BEFORE
+    // the level check — a trashed photo shouldn't even reach the
+    // 403-vs-200 permission branch, it's 404 first.
+    if (
+      !photo ||
+      !photo.folderId ||
+      !permittedIds.has(photo.folderId) ||
+      photo.deletedAt != null ||
+      photo.folder?.deletedAt != null
+    ) {
       return res.status(404).json({ error: "Photo not found" });
     }
 
@@ -225,7 +254,12 @@ router.get(
     const guestUserId = req.guest!.guestUserId;
 
     // Choke point: not in the permitted set → 404 (indistinguishable from
-    // nonexistent — never confirm a folder the guest can't see).
+    // nonexistent — never confirm a folder the guest can't see). specs/
+    // trash-system.md audit row #19: #15's set-level exclusion already
+    // covers a trashed folder here (before the level check, per the spec's
+    // reasoning matching #16's "owner-trash disappears the folder just like
+    // an explicit revoke"); queryDownloadablePhotos (#20 below) covers the
+    // photo-set transitively too.
     const permittedIds = await getPermittedFolderIds(guestUserId);
     if (!permittedIds.has(req.params.id)) {
       return res.status(404).json({ error: "Folder not found" });

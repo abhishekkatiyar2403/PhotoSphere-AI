@@ -44,8 +44,10 @@ router.get(
       return res.status(404).json({ error: "Collection not found" });
     }
 
+    // specs/trash-system.md audit row #11: exclude trashed folders — a
+    // trashed folder must NOT appear in the folder tree/sidebar.
     const folders = await prisma.folder.findMany({
-      where: { collectionId: collection.id },
+      where: { collectionId: collection.id, deletedAt: null },
       orderBy: { name: "asc" },
       select: { id: true, name: true, categoryType: true, photoCount: true, createdAt: true },
     });
@@ -87,7 +89,14 @@ router.post(
       });
       return res.status(201).json(folder);
     } catch (err) {
-      // @@unique([collectionId, name]) violation -> duplicate name in this collection.
+      // specs/trash-system.md audit row #12 / T7 (FINAL DECISION, FIXED, not
+      // deferred): this P2002 now comes off the partial unique index
+      // (`folder_active_name_unique ... WHERE deleted_at IS NULL`, see the
+      // migration + schema.prisma comments), NOT the old plain
+      // `@@unique([collectionId, name])`. A trashed folder with this name no
+      // longer occupies the slot, so this 409 now only fires when a LIVE
+      // folder already has the name — the exact friction the audit originally
+      // flagged (a trashed folder blocking a new same-named create) is gone.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
         return res.status(409).json({ error: "A folder with this name already exists in this collection" });
       }
@@ -139,10 +148,14 @@ router.get(
     // Question 1), so "unfiled photos owned by this user" and "unfiled
     // photos belonging to this collection" are the same set today, but the
     // filter is written correctly rather than relying on that coincidence.
+    // specs/trash-system.md audit row #13: add deletedAt: null (same
+    // reasoning as #1 — folderId is already null, so no folder-transitive
+    // check is needed here).
     const where: Prisma.PhotoWhereInput = {
       ownerId: req.user!.id,
       folderId: null,
       aiClassificationStatus: { in: ["failed", "duplicate"] },
+      deletedAt: null,
     };
 
     const [total, photos] = await prisma.$transaction([

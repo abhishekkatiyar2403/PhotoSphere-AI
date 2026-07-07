@@ -48,8 +48,18 @@ router.get(
     }
 
     // Owner scope FIRST — every filter narrows within this. Nothing below can
-    // widen past the caller's own photos.
-    const where: Prisma.PhotoWhereInput = { ownerId };
+    // widen past the caller's own photos. specs/trash-system.md audit row
+    // #14 (flagged as the SINGLE HIGHEST-LEAK-RISK path in the whole audit):
+    // exclude the caller's own trashed photos, AND (T-folder-photos
+    // transitive hiding) any photo whose FOLDER is trashed — a photo never
+    // gets its own deletedAt set just because its folder was trashed, so
+    // `deletedAt: null` alone is not enough; a photo with `folderId: null`
+    // has no folder to check, hence the OR.
+    const where: Prisma.PhotoWhereInput = {
+      ownerId,
+      deletedAt: null,
+      OR: [{ folderId: null }, { folder: { deletedAt: null } }],
+    };
 
     // q — substring on originalFilename, case-insensitive (SQL ILIKE, S4).
     // Empty/whitespace was normalized to undefined by the schema.
@@ -70,11 +80,14 @@ router.get(
     if (query.folderId === UNFILED_FOLDER_LITERAL) {
       where.folderId = null;
     } else if (query.folderId) {
+      // specs/trash-system.md audit row #14: a trashed folder must 404 here
+      // too — a search-by-folder must not surface a trashed folder's
+      // (still-technically-live) photos.
       const folder = await prisma.folder.findUnique({
         where: { id: query.folderId },
         include: { collection: { select: { ownerId: true } } },
       });
-      if (!folder || folder.collection.ownerId !== ownerId) {
+      if (!folder || folder.collection.ownerId !== ownerId || folder.deletedAt != null) {
         return res.status(404).json({ error: "Folder not found" });
       }
       where.folderId = folder.id;
@@ -85,8 +98,11 @@ router.get(
     // are considered (folder -> collection -> ownerId), so this can never match
     // another owner's identically-named folder.
     if (query.category) {
+      // specs/trash-system.md audit row #14: exclude trashed folders from
+      // the category (= folder-name) match — a category search must not
+      // surface a trashed folder's photos via its still-live name match.
       const ownedFolders = await prisma.folder.findMany({
-        where: { name: query.category, collection: { ownerId } },
+        where: { name: query.category, collection: { ownerId }, deletedAt: null },
         select: { id: true },
       });
       // No such folder → no photos in that category. Empty result (still
