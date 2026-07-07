@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- Multi-select Option C: long-press / right-click to start selecting -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Organize</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="48" width="180" height="552" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="16" y="76" font-size="12" fill="#8a90a0" font-weight="bold">MY PHOTOS</text>
+  <rect x="8" y="88" width="164" height="28" rx="4" fill="#e8eefc"/>
+  <text x="18" y="107" font-size="13" fill="#1b3a9e" font-weight="bold">Nature</text>
+  <text x="18" y="138" font-size="13" fill="#333">People</text>
+  <text x="18" y="166" font-size="13" fill="#333">Food</text>
+  <text x="18" y="194" font-size="13" fill="#8a90a0">Unfiled</text>
+
+  <text x="196" y="76" font-size="15" fill="#222" font-weight="bold">Nature — 8 photos</text>
+  <text x="560" y="76" font-size="10" fill="#8a90a0">Right-click (or long-press) a photo to start selecting</text>
+
+  <!-- Card being long-pressed, showing a small context/tooltip cue -->
+  <rect x="196" y="92" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#3057d5" stroke-dasharray="4,3"/>
+  <text x="200" y="206" font-size="9" fill="#8a90a0">IMG_0142.jpg</text>
+  <rect x="240" y="60" width="150" height="24" rx="4" fill="#222" opacity="0.85"/>
+  <text x="252" y="76" font-size="10" fill="#ffffff">Hold to start selecting…</text>
+
+  <!-- After long-press: same checkbox visual language as A, entered via a different trigger -->
+  <rect x="338" y="92" width="134" height="100" rx="6" fill="#e8eefc" stroke="#3057d5" stroke-width="2"/>
+  <rect x="346" y="100" width="18" height="18" rx="3" fill="#3057d5"/>
+  <text x="350" y="114" font-size="12" fill="#ffffff" font-weight="bold">✓</text>
+  <text x="342" y="206" font-size="9" fill="#8a90a0">IMG_0143.jpg</text>
+
+  <rect x="480" y="92" width="134" height="100" rx="6" fill="#e8eefc" stroke="#3057d5" stroke-width="2"/>
+  <rect x="488" y="100" width="18" height="18" rx="3" fill="#3057d5"/>
+  <text x="492" y="114" font-size="12" fill="#ffffff" font-weight="bold">✓</text>
+  <text x="484" y="206" font-size="9" fill="#8a90a0">IMG_0144.jpg</text>
+
+  <rect x="622" y="92" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="630" y="100" width="18" height="18" rx="3" fill="#ffffff" stroke="#8a90a0"/>
+  <text x="626" y="206" font-size="9" fill="#8a90a0">IMG_0145.jpg</text>
+
+  <rect x="196" y="222" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="204" y="230" width="18" height="18" rx="3" fill="#ffffff" stroke="#8a90a0"/>
+  <text x="200" y="336" font-size="9" fill="#8a90a0">IMG_0146.jpg</text>
+  <rect x="338" y="222" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="346" y="230" width="18" height="18" rx="3" fill="#ffffff" stroke="#8a90a0"/>
+  <text x="342" y="336" font-size="9" fill="#8a90a0">IMG_0147.jpg</text>
+  <rect x="480" y="222" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="488" y="230" width="18" height="18" rx="3" fill="#ffffff" stroke="#8a90a0"/>
+  <text x="484" y="336" font-size="9" fill="#8a90a0">IMG_0148.jpg</text>
+  <rect x="622" y="222" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="630" y="230" width="18" height="18" rx="3" fill="#ffffff" stroke="#8a90a0"/>
+  <text x="626" y="336" font-size="9" fill="#8a90a0">IMG_0149.jpg</text>
+
+  <!-- Bottom bar, same as A once any selection exists -->
+  <rect x="180" y="500" width="620" height="52" fill="#1b3a9e"/>
+  <text x="200" y="531" font-size="13" fill="#ffffff" font-weight="bold">2 selected</text>
+  <rect x="300" y="512" width="120" height="28" rx="5" fill="#c46b6b"/>
+  <text x="316" y="531" font-size="12" fill="#ffffff" font-weight="bold">Delete selected</text>
+  <rect x="432" y="512" width="80" height="28" rx="5" fill="#3057d5" stroke="#7d94e0"/>
+  <text x="452" y="531" font-size="12" fill="#ffffff">Cancel</text>
+
+  <!-- Confirm dialog -->
+  <rect x="220" y="370" width="380" height="112" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="240" y="396" font-size="13" fill="#222" font-weight="bold">Delete 2 photos?</text>
+  <text x="240" y="416" font-size="11" fill="#333">They'll move to Trash and stay recoverable for 7 days.</text>
+  <rect x="240" y="428" width="110" height="26" rx="5" fill="#b05555"/>
+  <text x="256" y="446" font-size="12" fill="#ffffff" font-weight="bold">Delete (2)</text>
+  <rect x="358" y="428" width="70" height="26" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="376" y="446" font-size="12" fill="#5a6070">Cancel</text>
+
+  <!-- Footnote -->
+  <text x="196" y="562" font-size="10" fill="#8a90a0">Option C — long-press (touch) or right-click (desktop) a card to enter selection, same checkbox/bottom-bar visual</text>
+  <text x="196" y="576" font-size="10" fill="#8a90a0">language as Option A but a less-discoverable entry trigger with no visible affordance until the gesture is performed.</text>
+</svg>

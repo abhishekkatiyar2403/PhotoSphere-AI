@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- Multi-select Option B: explicit "Select" mode toggle -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Organize</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="48" width="180" height="552" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="16" y="76" font-size="12" fill="#8a90a0" font-weight="bold">MY PHOTOS</text>
+  <rect x="8" y="88" width="164" height="28" rx="4" fill="#e8eefc"/>
+  <text x="18" y="107" font-size="13" fill="#1b3a9e" font-weight="bold">Nature</text>
+  <text x="18" y="138" font-size="13" fill="#333">People</text>
+  <text x="18" y="166" font-size="13" fill="#333">Food</text>
+  <text x="18" y="194" font-size="13" fill="#8a90a0">Unfiled</text>
+
+  <!-- Grid header w/ Select mode toggle -->
+  <text x="196" y="76" font-size="15" fill="#222" font-weight="bold">Nature — 8 photos</text>
+  <rect x="660" y="60" width="96" height="26" rx="5" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="676" y="77" font-size="11" fill="#1b3a9e" font-weight="bold">Select photos</text>
+
+  <!-- Selection-mode top bar (appears once toggled) -->
+  <rect x="196" y="96" width="560" height="34" rx="6" fill="#1b3a9e"/>
+  <text x="212" y="118" font-size="12" fill="#ffffff" font-weight="bold">Select mode — 3 selected</text>
+  <rect x="420" y="102" width="110" height="22" rx="4" fill="#c46b6b"/>
+  <text x="436" y="117" font-size="11" fill="#ffffff" font-weight="bold">Delete selected</text>
+  <rect x="540" y="102" width="72" height="22" rx="4" fill="#ffffff" stroke="#7d94e0"/>
+  <text x="558" y="117" font-size="11" fill="#1b3a9e">Select all</text>
+  <rect x="700" y="102" width="46" height="22" rx="4" fill="#ffffff" stroke="#7d94e0"/>
+  <text x="712" y="117" font-size="11" fill="#1b3a9e">Done</text>
+
+  <!-- Photo grid: ALL cards show checkboxes in select mode -->
+  <rect x="196" y="144" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="204" y="152" width="18" height="18" rx="3" fill="#ffffff" stroke="#8a90a0"/>
+  <text x="200" y="258" font-size="9" fill="#8a90a0">IMG_0142.jpg</text>
+
+  <rect x="338" y="144" width="134" height="100" rx="6" fill="#e8eefc" stroke="#3057d5" stroke-width="2"/>
+  <rect x="346" y="152" width="18" height="18" rx="3" fill="#3057d5"/>
+  <text x="350" y="166" font-size="12" fill="#ffffff" font-weight="bold">✓</text>
+  <text x="342" y="258" font-size="9" fill="#8a90a0">IMG_0143.jpg</text>
+
+  <rect x="480" y="144" width="134" height="100" rx="6" fill="#e8eefc" stroke="#3057d5" stroke-width="2"/>
+  <rect x="488" y="152" width="18" height="18" rx="3" fill="#3057d5"/>
+  <text x="492" y="166" font-size="12" fill="#ffffff" font-weight="bold">✓</text>
+  <text x="484" y="258" font-size="9" fill="#8a90a0">IMG_0144.jpg</text>
+
+  <rect x="622" y="144" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="630" y="152" width="18" height="18" rx="3" fill="#ffffff" stroke="#8a90a0"/>
+  <text x="626" y="258" font-size="9" fill="#8a90a0">IMG_0145.jpg</text>
+
+  <rect x="196" y="272" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="204" y="280" width="18" height="18" rx="3" fill="#ffffff" stroke="#8a90a0"/>
+  <text x="200" y="386" font-size="9" fill="#8a90a0">IMG_0146.jpg</text>
+
+  <rect x="338" y="272" width="134" height="100" rx="6" fill="#e8eefc" stroke="#3057d5" stroke-width="2"/>
+  <rect x="346" y="280" width="18" height="18" rx="3" fill="#3057d5"/>
+  <text x="350" y="294" font-size="12" fill="#ffffff" font-weight="bold">✓</text>
+  <text x="342" y="386" font-size="9" fill="#8a90a0">IMG_0147.jpg</text>
+
+  <rect x="480" y="272" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="488" y="280" width="18" height="18" rx="3" fill="#ffffff" stroke="#8a90a0"/>
+  <text x="484" y="386" font-size="9" fill="#8a90a0">IMG_0148.jpg</text>
+
+  <rect x="622" y="272" width="134" height="100" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="630" y="280" width="18" height="18" rx="3" fill="#ffffff" stroke="#8a90a0"/>
+  <text x="626" y="386" font-size="9" fill="#8a90a0">IMG_0149.jpg</text>
+
+  <!-- Partial-result state (T2 case) after confirming delete -->
+  <rect x="196" y="420" width="560" height="60" rx="8" fill="#f3e2e2" stroke="#e2b6b6"/>
+  <rect x="196" y="420" width="6" height="60" rx="3" fill="#c46b6b"/>
+  <text x="216" y="444" font-size="12" fill="#9a5555" font-weight="bold">2 deleted, 1 skipped — shared with a guest</text>
+  <text x="216" y="462" font-size="10" fill="#9a5555">IMG_0147.jpg wasn't deleted because "Nature" is shared. Revoke the share first, or delete it alone.</text>
+
+  <!-- Footnote -->
+  <text x="196" y="562" font-size="10" fill="#8a90a0">Option B — an explicit "Select photos" toggle enters a deliberate select-mode (all cards get checkboxes, a top action</text>
+  <text x="196" y="576" font-size="10" fill="#8a90a0">bar with Select all/Done). Mirrors P4's kebab-menu mode-gate precedent. Confirm dialog reuses A's reversible copy.</text>
+</svg>
