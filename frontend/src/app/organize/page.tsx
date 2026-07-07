@@ -516,11 +516,14 @@ export default function OrganizePage() {
     window.location.assign(downloadAllApi.ownerFolderUrl(folderId));
   }
 
-  // ---- Move a photo to another folder (only offered on real-folder cards,
-  // never on Unfiled's failed/duplicate cards - those use Reclassify) ----
+  // ---- Move a photo to another folder. Offered on every card regardless of
+  // status - including failed/duplicate cards sitting in Unfiled, which also
+  // keep their Reclassify / "Not a duplicate?" action alongside it, so a card
+  // stuck in classification limbo always has a manual way out. ----
   async function handleMove(photoId: string, targetFolderId: string) {
     if (!targetFolderId || !selectedFolderId) return;
     const sourceFolderId = selectedFolderId;
+    const sourceWasUnfiled = sourceFolderId === UNFILED_FOLDER_ID;
 
     setPhotos((prev) => prev.map((p) => (p.id === photoId ? { ...p, moving: true, actionError: null } : p)));
 
@@ -539,11 +542,15 @@ export default function OrganizePage() {
       setPhotos((prev) => prev.filter((p) => p.id !== photoId));
       setTotal((prev) => Math.max(0, prev - 1));
 
-      // Reconcile both real folders' live counts. Server guarantees exactly
-      // a +1/-1 pair on success (routes/photos.ts PATCH handler), so a
-      // targeted local update is safe and avoids a full sidebar refetch.
-      // (sourceFolderId is never UNFILED_FOLDER_ID here - Unfiled cards
-      // don't render a move dropdown - so this is always a real folder id.)
+      // Reconcile the live counts. Server guarantees exactly a +1/-1 pair on
+      // success (routes/photos.ts PATCH handler), so a targeted local update
+      // is safe and avoids a full sidebar refetch. Unfiled isn't a real
+      // Folder row (no photoCount to decrement via setFolders - the mapping
+      // below is a harmless no-op for it since no folder has that id), so
+      // moving OUT of Unfiled decrements the sidebar's unfiledCount instead.
+      if (sourceWasUnfiled) {
+        setUnfiledCount((prev) => Math.max(0, prev - 1));
+      }
       setFolders((prev) =>
         prev.map((f) => {
           if (f.id === sourceFolderId) return { ...f, photoCount: Math.max(0, f.photoCount - 1) };
@@ -1227,26 +1234,24 @@ function PhotoCard({
             {photo.reclassifying ? "Checking…" : "Not a duplicate?"}
           </button>
         )}
-        {photo.status !== "failed" && photo.status !== "duplicate" && (
-          <select
-            data-testid={`move-select-${photo.id}`}
-            value=""
-            disabled={photo.moving || moveTargets.length === 0}
-            onChange={(e) => {
-              const target = e.target.value;
-              if (target) onMove(photo.id, target);
-            }}
-          >
-            <option value="" disabled>
-              {photo.moving ? "Moving…" : "Move to… ▾"}
+        <select
+          data-testid={`move-select-${photo.id}`}
+          value=""
+          disabled={photo.moving || moveTargets.length === 0}
+          onChange={(e) => {
+            const target = e.target.value;
+            if (target) onMove(photo.id, target);
+          }}
+        >
+          <option value="" disabled>
+            {photo.moving ? "Moving…" : "Move to… ▾"}
+          </option>
+          {moveTargets.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
             </option>
-            {moveTargets.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
-        )}
+          ))}
+        </select>
       </div>
     </div>
   );

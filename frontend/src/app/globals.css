@@ -427,6 +427,12 @@ body {
   color: #9a7d2e;
 }
 
+.organize-card-action {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .organize-card-action select,
 .organize-card-action button {
   width: 100%;
