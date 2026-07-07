@@ -2,9 +2,16 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  // The full parsed JSON error body, when present — added for the trash
+  // system's restore-collision 409, whose payload carries
+  // conflictingFolderId/conflictingFolderName alongside `error: "conflict"`.
+  // Every earlier call site only ever read `.message`/`.status`, so this is
+  // purely additive.
+  body: Record<string, unknown> | null;
+  constructor(message: string, status: number, body: Record<string, unknown> | null = null) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -22,7 +29,7 @@ async function apiFetch(path: string, init?: RequestInit) {
   const body = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    throw new ApiError(body?.error ?? "Request failed", res.status);
+    throw new ApiError(body?.error ?? "Request failed", res.status, body ?? null);
   }
 
   return body;
@@ -127,6 +134,44 @@ export type PhotoDetail = {
   collectionId: string | null;
 };
 
+// Trash system (specs/trash-system.md). Single photo soft-delete returns
+// { deleted, photoId, folderId, deletedAt, purgeAt } / 409 if the photo's
+// folder is live-shared (T2, reversed — same posture as folder-level F1).
+export type DeletePhotoResponse = {
+  deleted: true;
+  photoId: string;
+  folderId: string | null;
+  deletedAt: string;
+  purgeAt: string;
+};
+
+// Bulk soft-delete (max 100 ids) — partial success. A uniform "not_found"
+// reason covers not-owned/nonexistent/already-trashed/blocked-by-live-share;
+// the backend deliberately does not distinguish which (see routes/photos.ts).
+export type BulkDeletePhotosResponse = {
+  deleted: string[];
+  failed: { id: string; reason: "not_found" }[];
+};
+
+// Photo restore auto-cascades into restoring an also-trashed folder first; if
+// that hits an unresolved name collision, the call REJECTS with an ApiError
+// (status 409, .body carrying the SAME conflict shape a folder-restore 409
+// does: { error: "conflict", conflictingFolderId, conflictingFolderName }) —
+// same as foldersApi.restore's collision. Callers catch it via ApiError, not
+// a discriminated return value.
+export type PhotoRestoreResult = {
+  restored: true;
+  id: string;
+  folderId: string | null;
+  folder: { id: string; name: string } | null;
+};
+
+export type RestoreConflictBody = { error: "conflict"; conflictingFolderId: string; conflictingFolderName: string };
+
+export function isRestoreConflict(err: unknown): err is ApiError & { body: RestoreConflictBody } {
+  return err instanceof ApiError && err.status === 409 && err.body?.error === "conflict";
+}
+
 export const photosApi = {
   upload: uploadFile,
   uploadWithProgress: uploadFileWithProgress,
@@ -136,6 +181,62 @@ export const photosApi = {
     apiFetch(`/api/photos/${photoId}`, { method: "PATCH", body: JSON.stringify({ folderId }) }),
   reclassify: (photoId: string) =>
     apiFetch(`/api/photos/${photoId}/reclassify`, { method: "POST" }),
+  remove: (photoId: string): Promise<DeletePhotoResponse> =>
+    apiFetch(`/api/photos/${photoId}`, { method: "DELETE" }),
+  bulkDelete: (photoIds: string[]): Promise<BulkDeletePhotosResponse> =>
+    apiFetch("/api/photos/bulk-delete", { method: "POST", body: JSON.stringify({ photoIds }) }),
+  restore: (photoId: string): Promise<PhotoRestoreResult> =>
+    apiFetch(`/api/photos/${photoId}/restore`, { method: "POST" }),
+};
+
+// Trash page (design/wireframes/trash-page.svg, Option A — dedicated /trash
+// page). GET /api/trash lists both sections in one paginated-per-section
+// response; DELETE /api/trash/:type/:id purges one item now (skips the
+// 7-day wait); DELETE /api/trash empties everything.
+export type TrashPhotoItem = {
+  id: string;
+  originalFilename: string;
+  folderId: string | null;
+  deletedAt: string;
+  purgeAt: string;
+  daysRemaining: number;
+};
+
+export type TrashFolderItem = {
+  id: string;
+  name: string;
+  categoryType: "ai_generated" | "custom";
+  photoCount: number;
+  deletedAt: string;
+  purgeAt: string;
+  daysRemaining: number;
+};
+
+export type TrashListResponse = {
+  photos: TrashPhotoItem[];
+  photoTotal: number;
+  folders: TrashFolderItem[];
+  folderTotal: number;
+  limit: number;
+  offset: number;
+};
+
+export type FolderRestoreResult =
+  | { restored: true; id: string; name: string; categoryType: "ai_generated" | "custom"; photoCount: number }
+  | { merged: true; targetFolderId: string; photosMoved: number; targetPhotoCount: number };
+
+export const trashApi = {
+  list: (params: { limit?: number; offset?: number } = {}): Promise<TrashListResponse> => {
+    const qs = new URLSearchParams();
+    if (params.limit != null) qs.set("limit", String(params.limit));
+    if (params.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return apiFetch(`/api/trash${q ? `?${q}` : ""}`, { method: "GET" });
+  },
+  purgeOne: (type: "photo" | "folder", id: string): Promise<{ purged: true; type: string; id: string }> =>
+    apiFetch(`/api/trash/${type}/${id}`, { method: "DELETE" }),
+  emptyAll: (): Promise<{ emptied: true; photosDeleted: number; foldersDeleted: number }> =>
+    apiFetch("/api/trash", { method: "DELETE" }),
 };
 
 // Organize page (specs/ai-classification.md §6 - reclassification UI,
@@ -180,7 +281,11 @@ export type MergeFolderResponse = {
   targetPhotoCount: number;
 };
 
-export type DeleteFolderResponse = { deleted: true; photosOrphaned: number };
+// Response shape REVISED by specs/trash-system.md — the old `photosOrphaned`
+// field is GONE (nothing is orphaned anymore; the folder + its photos move to
+// Trash together, recoverable for 7 days). See DELETE /api/folders/:id in
+// routes/folders.ts.
+export type DeleteFolderResponse = { deleted: true; deletedAt: string; purgeAt: string };
 
 export const foldersApi = {
   list: (collectionId: string): Promise<{ folders: Folder[] }> =>
@@ -199,6 +304,11 @@ export const foldersApi = {
     }),
   remove: (id: string): Promise<DeleteFolderResponse> =>
     apiFetch(`/api/folders/${id}`, { method: "DELETE" }),
+  restore: (id: string, onConflict?: "merge" | "rename", newName?: string): Promise<FolderRestoreResult> =>
+    apiFetch(`/api/folders/${id}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ onConflict, newName }),
+    }),
 };
 
 // Bulk "download all" (specs/folder-mgmt-download-search.md PART P5). Both

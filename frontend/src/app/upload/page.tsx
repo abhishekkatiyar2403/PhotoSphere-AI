@@ -234,6 +234,9 @@ export default function UploadPage() {
           <Link href="/activity" className="dashboard-guests-link" data-testid="upload-activity-link">
             Activity
           </Link>
+          <Link href="/trash" className="dashboard-guests-link" data-testid="upload-trash-link">
+            Trash
+          </Link>
         </div>
       </div>
 

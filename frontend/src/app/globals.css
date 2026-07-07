@@ -2284,3 +2284,408 @@ body {
 .portal-downloadall-btn {
   margin-left: 12px;
 }
+
+/* --- Multi-select + delete on /organize (specs/trash-system.md,
+   design/wireframes/multi-select-delete.svg - Option A: checkbox-on-hover +
+   persistent bottom action bar). --- */
+
+.organize-card {
+  position: relative; /* anchors .organize-card-checkbox */
+}
+
+.organize-card-checkbox {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: #ffffff;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+  opacity: 0; /* hidden until hover, per the wireframe */
+  transition: opacity 0.1s ease;
+}
+
+.organize-card:hover .organize-card-checkbox,
+.organize-card-checkbox:focus-visible {
+  opacity: 1;
+}
+
+.organize-card-selected .organize-card-checkbox {
+  opacity: 1;
+  background: #3057d5;
+  border-color: #3057d5;
+}
+
+.organize-card-selected {
+  outline: 2px solid #3057d5;
+  outline-offset: 2px;
+  background: #e8eefc;
+}
+
+.organize-card-delete {
+  background: none !important;
+  border: 1px solid #c46b6b !important;
+  color: #9a5555 !important;
+}
+
+.organize-card-delete:hover {
+  background: #f3e2e2 !important;
+}
+
+.organize-selectall-btn,
+.organize-selectall-link {
+  margin-left: 12px;
+  font-size: 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.organize-selectall-link {
+  border: none;
+  background: none;
+  color: #3057d5;
+  text-decoration: underline;
+  padding: 4px 0;
+}
+
+.organize-selectall-btn:hover {
+  background: var(--color-bg);
+}
+
+/* Marquee/rubber-band drag-select rectangle - fixed-position, drawn over the
+   grid while a drag from empty space is in progress. */
+.organize-marquee {
+  position: fixed;
+  border: 1px solid #3057d5;
+  background: rgba(48, 87, 213, 0.12);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Persistent bottom action bar - appears once >=1 photo is selected. */
+.organize-selectbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 24px;
+  background: #1b3a9e;
+  color: #ffffff;
+  z-index: 20;
+}
+
+.organize-selectbar-count {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.organize-selectbar-delete {
+  background: #c46b6b;
+  color: #ffffff;
+  border: none;
+  border-radius: 5px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.organize-selectbar-delete:hover {
+  background: #b05555;
+}
+
+.organize-selectbar-cancel {
+  background: #3057d5;
+  color: #ffffff;
+  border: 1px solid #7d94e0;
+  border-radius: 5px;
+  padding: 8px 16px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.organize-selectbar-cancel:hover {
+  background: #2947b8;
+}
+
+/* --- Trash page (specs/trash-system.md, design/wireframes/trash-page.svg -
+   Option A: dedicated /trash page). Reuses .organize-topbar/-modal-* etc. --- */
+.trash-shell {
+  min-height: 100vh;
+}
+
+.trash-content {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.trash-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.trash-subhead {
+  font-size: 12px;
+  color: var(--color-muted);
+  margin: 2px 0 0;
+}
+
+.trash-empty-btn {
+  background: #f3e2e2;
+  border: 1px solid #e2b6b6;
+  color: #9a5555;
+  font-weight: 700;
+  font-size: 12px;
+  border-radius: 5px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.trash-empty-btn:hover:not(:disabled) {
+  background: #eed3d3;
+}
+
+.trash-empty-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.trash-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.trash-tab {
+  background: none;
+  border: none;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.trash-tab.active {
+  color: #1b3a9e;
+  border-bottom-color: #3057d5;
+  background: #e8eefc;
+  border-radius: 6px 6px 0 0;
+}
+
+.trash-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trash-row {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.trash-row.urgent {
+  border-color: #e2b6b6;
+}
+
+.trash-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.trash-row-thumb {
+  width: 46px;
+  height: 36px;
+  border-radius: 4px;
+  background: #dfe3ea;
+  flex-shrink: 0;
+}
+
+.trash-row-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.trash-row-meta {
+  margin: 2px 0 0;
+  font-size: 10px;
+  color: var(--color-muted);
+}
+
+.trash-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trash-days-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #5a6070;
+  background: #eef1f6;
+  border-radius: 9px;
+  padding: 4px 10px;
+}
+
+.trash-days-badge.urgent {
+  color: #9a5555;
+  background: #f3e2e2;
+}
+
+.trash-recover-btn {
+  background: #3057d5;
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.trash-recover-btn:hover:not(:disabled) {
+  background: #2947b8;
+}
+
+.trash-delete-forever-btn {
+  background: #ffffff;
+  color: #9a5555;
+  border: 1px solid #c46b6b;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.trash-delete-forever-btn:hover {
+  background: #f3e2e2;
+}
+
+.trash-row-error {
+  width: 100%;
+}
+
+/* Restore-collision inline panel - shared between a photo row and a folder
+   row. */
+.trash-collision {
+  width: 100%;
+  background: #f3e2e2;
+  border: 1px solid #e2b6b6;
+  border-left: 4px solid #c46b6b;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-top: 6px;
+}
+
+.trash-collision-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #9a5555;
+}
+
+.trash-collision-sub {
+  margin: 0 0 10px;
+  font-size: 10px;
+  color: #9a5555;
+}
+
+.trash-collision-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.trash-collision-merge {
+  background: #3057d5;
+  color: #ffffff;
+  border: none;
+  border-radius: 5px;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.trash-collision-rename {
+  background: #ffffff;
+  color: #5a6070;
+  border: 1px solid #b9c0cf;
+  border-radius: 5px;
+  padding: 6px 14px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.trash-collision-rename-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.trash-collision-rename-row input {
+  flex: 1 1 auto;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+/* Irreversible-action modals (Delete forever / Empty trash) - stronger red
+   border than the normal .organize-modal, matching the wireframe's
+   emphasis. */
+.trash-danger-modal {
+  border: 2px solid #c46b6b;
+}
+
+.trash-danger-copy {
+  color: #9a5555;
+}
+
+.trash-empty-confirm-btn {
+  background: #b05555;
+  color: #ffffff;
+  border: none;
+  border-radius: 5px;
+  padding: 8px 18px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.trash-empty-confirm-btn:hover:not(:disabled) {
+  background: #9a4747;
+}

@@ -281,6 +281,9 @@ function BrowsePageInner() {
           <Link href="/activity" className="dashboard-guests-link" data-testid="browse-activity-link">
             Activity
           </Link>
+          <Link href="/trash" className="dashboard-guests-link" data-testid="browse-trash-link">
+            Trash
+          </Link>
         </div>
       </div>
 

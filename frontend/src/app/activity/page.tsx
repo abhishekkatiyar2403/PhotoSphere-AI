@@ -281,6 +281,9 @@ export default function ActivityPage() {
           >
             Activity
           </Link>
+          <Link href="/trash" className="dashboard-guests-link" data-testid="activity-trash-link">
+            Trash
+          </Link>
           <span>{user.name}</span>
           <button type="button" className="dashboard-logout" onClick={handleLogout}>
             Log out

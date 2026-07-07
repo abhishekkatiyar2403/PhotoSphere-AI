@@ -25,7 +25,24 @@
 // collection-scoped server-side to begin with - see that route's comment),
 // so the initial-load effect below now always checks it, independent of
 // whether a collection/folder has ever been created.
+//
+// Multi-select + Trash delete (specs/trash-system.md, design/wireframes/
+// multi-select-delete.svg - Option A: checkbox-on-hover + persistent bottom
+// action bar). Desktop-style selection per Abhishek's explicit requirement:
+// plain click on a card's checkbox area toggles it; Shift+click selects the
+// contiguous range from the last-clicked card (in current grid order);
+// Ctrl/Cmd+click toggles one card without clearing the rest; a click-and-drag
+// starting on empty grid space draws a marquee, and any card whose bounding
+// box intersects it on mouseup is selected - a PLAIN drag REPLACES the
+// selection with what's under the box (Finder/Explorer convention), while
+// holding Shift or Ctrl/Cmd during the drag ADDS to the existing selection
+// instead. "Select all" selects every photo on the CURRENT page; a secondary
+// "Select all N in this folder" link (shown only when the folder has more
+// photos than fit on one page) fetches every page's ids first. Built ONLY on
+// /organize, not /browse (Day3.md's read-only design for /browse - see
+// STATUS.md's scope call) - no backend file touched.
 
+import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -113,6 +130,33 @@ export default function OrganizePage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteBlocked, setDeleteBlocked] = useState(false); // F1 shared-with-guest 409
   const [deleteBusy, setDeleteBusy] = useState(false);
+
+  // ---- Multi-select + Trash delete (design/wireframes/multi-select-delete.svg
+  // Option A). selectedIds is a Set for O(1) toggle checks; lastClickedId
+  // anchors Shift+click range selection to the current grid order (`photos`).
+  // marquee tracks an in-progress drag-select rectangle in PAGE coordinates
+  // (so it's stable while the page scrolls) - null when no drag is active.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastClickedId, setLastClickedId] = useState<string | null>(null);
+  const [marquee, setMarquee] = useState<{ startX: number; startY: number; x: number; y: number } | null>(null);
+  const marqueeAdditiveRef = useRef(false); // Shift/Ctrl held at drag-start -> add to selection instead of replace
+  const gridRef = useRef<HTMLDivElement | null>(null);
+
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
+  const [bulkDeleteResult, setBulkDeleteResult] = useState<{ deletedCount: number; failedCount: number } | null>(
+    null,
+  );
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+
+  const [selectingAllAcrossPages, setSelectingAllAcrossPages] = useState(false);
+
+  // ---- Single-photo delete (a per-card delete action, separate from
+  // multi-select) - reversible copy + T2 409 handling. ----
+  const [deletePhotoTarget, setDeletePhotoTarget] = useState<CardState | null>(null);
+  const [deletePhotoBusy, setDeletePhotoBusy] = useState(false);
+  const [deletePhotoError, setDeletePhotoError] = useState<string | null>(null);
+  const [deletePhotoBlocked, setDeletePhotoBlocked] = useState(false); // T2 409
 
   // Guards against stale async responses clobbering newer state - e.g.
   // switching folders quickly, or a reclassify poll resolving after the
@@ -319,7 +363,18 @@ export default function OrganizePage() {
     if (!selectedFolderId) return;
     setOffset(0);
     loadFolderPhotos(selectedFolderId, 0);
+    // Switching folders (or Unfiled) invalidates any in-progress selection -
+    // the grid contents are about to change entirely.
+    setSelectedIds(new Set());
+    setLastClickedId(null);
   }, [selectedFolderId, loadFolderPhotos]);
+
+  // Pagination also changes the visible card set - clear selection so
+  // Delete-selected never silently targets ids no longer on screen.
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setLastClickedId(null);
+  }, [offset]);
 
   // ---- Inline folder creation ----
   async function handleCreateFolder() {
@@ -699,6 +754,253 @@ export default function OrganizePage() {
     loadFolderPhotos(selectedFolderId, offset + PAGE_LIMIT);
   }
 
+  // ---- Multi-select handlers ----
+
+  // Plain click on a card's checkbox area: toggle just that card.
+  // Shift+click: select the contiguous range (in current grid order) between
+  // lastClickedId and this card. Ctrl/Cmd+click: toggle this one card
+  // without clearing the rest. A plain click with no modifier also clears
+  // any OTHER selection first (matches a normal single-select click), while
+  // Ctrl/Cmd/Shift never do.
+  function handleCardSelectClick(photoId: string, e: React.MouseEvent) {
+    const ids = photos.map((p) => p.id);
+    if (e.shiftKey && lastClickedId) {
+      const fromIdx = ids.indexOf(lastClickedId);
+      const toIdx = ids.indexOf(photoId);
+      if (fromIdx !== -1 && toIdx !== -1) {
+        const [lo, hi] = fromIdx < toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx];
+        const range = ids.slice(lo, hi + 1);
+        setSelectedIds((prev) => new Set([...prev, ...range]));
+        return; // Shift+click does not move the anchor
+      }
+    }
+    if (e.metaKey || e.ctrlKey) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(photoId)) next.delete(photoId);
+        else next.add(photoId);
+        return next;
+      });
+      setLastClickedId(photoId);
+      return;
+    }
+    // Plain click: toggle this card, replacing any other selection - the
+    // conventional "click selects just this one" behavior.
+    setSelectedIds((prev) => (prev.size === 1 && prev.has(photoId) ? new Set() : new Set([photoId])));
+    setLastClickedId(photoId);
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setLastClickedId(null);
+  }
+
+  function handleSelectAllOnPage() {
+    setSelectedIds(new Set(photos.map((p) => p.id)));
+  }
+
+  // "Select all N across all pages" - only offered when the folder has more
+  // photos than fit on one page. Fetches every page's ids for the CURRENT
+  // folder (not just the current page) via repeated folderPhotosApi/
+  // unfiledPhotosApi calls, then selects the union. Scoped honestly: this
+  // never claims to select more than it actually fetched.
+  async function handleSelectAllAcrossPages() {
+    if (!selectedFolderId) return;
+    setSelectingAllAcrossPages(true);
+    try {
+      const allIds: string[] = [];
+      let fetchOffset = 0;
+      const CHUNK = 100;
+      // total is already known from the current page's response; loop until
+      // every page is covered.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const res =
+          selectedFolderId === UNFILED_FOLDER_ID
+            ? await unfiledPhotosApi.list({ limit: CHUNK, offset: fetchOffset })
+            : await folderPhotosApi.list(selectedFolderId, { limit: CHUNK, offset: fetchOffset });
+        allIds.push(...res.photos.map((p) => p.id));
+        fetchOffset += CHUNK;
+        if (fetchOffset >= res.total || res.photos.length === 0) break;
+      }
+      setSelectedIds(new Set(allIds));
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      // Best-effort - leave whatever was already selected on the current
+      // page untouched rather than silently claiming a bigger selection.
+    } finally {
+      setSelectingAllAcrossPages(false);
+    }
+  }
+
+  // ---- Marquee/rubber-band drag-select. Starts only when the mousedown
+  // target is the grid background itself (not a card) - checked via
+  // e.target === e.currentTarget on the grid container. Coordinates are
+  // tracked relative to the viewport (clientX/clientY) since that's what
+  // getBoundingClientRect() on each card also returns, avoiding a scroll-
+  // offset mismatch. ----
+  function handleGridMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.target !== e.currentTarget) return; // started on a card, not empty space
+    if (e.button !== 0) return;
+    marqueeAdditiveRef.current = e.shiftKey || e.metaKey || e.ctrlKey;
+    setMarquee({ startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY });
+  }
+
+  function handleGridMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    if (!marquee) return;
+    setMarquee((prev) => (prev ? { ...prev, x: e.clientX, y: e.clientY } : prev));
+  }
+
+  function handleGridMouseUp() {
+    if (!marquee || !gridRef.current) {
+      setMarquee(null);
+      return;
+    }
+    const rectLeft = Math.min(marquee.startX, marquee.x);
+    const rectRight = Math.max(marquee.startX, marquee.x);
+    const rectTop = Math.min(marquee.startY, marquee.y);
+    const rectBottom = Math.max(marquee.startY, marquee.y);
+
+    // Ignore a negligible drag (a plain click that barely moved) - treat as
+    // "clicked empty space", which clears the selection (matches Finder).
+    const dragged = rectRight - rectLeft > 3 || rectBottom - rectTop > 3;
+
+    if (dragged) {
+      const cardEls = gridRef.current.querySelectorAll<HTMLElement>("[data-select-card-id]");
+      const hit: string[] = [];
+      cardEls.forEach((el) => {
+        const r = el.getBoundingClientRect();
+        const intersects = r.left < rectRight && r.right > rectLeft && r.top < rectBottom && r.bottom > rectTop;
+        if (intersects) {
+          const id = el.getAttribute("data-select-card-id");
+          if (id) hit.push(id);
+        }
+      });
+      setSelectedIds((prev) => (marqueeAdditiveRef.current ? new Set([...prev, ...hit]) : new Set(hit)));
+    } else if (!marqueeAdditiveRef.current) {
+      clearSelection();
+    }
+    setMarquee(null);
+  }
+
+  // ---- Bulk delete (T2 partial-success handled: some photos may be skipped
+  // because their folder is live-shared with a guest). Reversible copy, per
+  // the wireframe - the OPPOSITE tone from the Trash page's own permanent
+  // delete confirms. ----
+  function openBulkDeleteConfirm() {
+    setBulkDeleteResult(null);
+    setBulkDeleteError(null);
+    setBulkDeleteConfirmOpen(true);
+  }
+
+  function closeBulkDeleteConfirm() {
+    if (bulkDeleteBusy) return;
+    setBulkDeleteConfirmOpen(false);
+    setBulkDeleteResult(null);
+    setBulkDeleteError(null);
+  }
+
+  async function confirmBulkDelete() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setBulkDeleteBusy(true);
+    setBulkDeleteError(null);
+    try {
+      const res = await photosApi.bulkDelete(ids);
+      setBulkDeleteResult({ deletedCount: res.deleted.length, failedCount: res.failed.length });
+      // Remove the successfully-deleted photos from the grid + reconcile
+      // counts, same "server confirms success, targeted local update"
+      // pattern as handleMove. Failed ids (blocked/already-gone) stay
+      // visible - nothing was silently removed for them.
+      if (res.deleted.length > 0) {
+        const deletedSet = new Set(res.deleted);
+        setPhotos((prev) => prev.filter((p) => !deletedSet.has(p.id)));
+        setTotal((prev) => Math.max(0, prev - res.deleted.length));
+        if (selectedFolderId === UNFILED_FOLDER_ID) {
+          setUnfiledCount((prev) => Math.max(0, prev - res.deleted.length));
+        } else if (selectedFolderId) {
+          setFolders((prev) =>
+            prev.map((f) =>
+              f.id === selectedFolderId ? { ...f, photoCount: Math.max(0, f.photoCount - res.deleted.length) } : f,
+            ),
+          );
+        }
+      }
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        res.deleted.forEach((id) => next.delete(id));
+        return next;
+      });
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      setBulkDeleteError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setBulkDeleteBusy(false);
+    }
+  }
+
+  // ---- Single-photo delete (per-card action, e.g. via a Delete button on
+  // the card) - same reversible "moved to Trash" copy as bulk delete. The T2
+  // 409 (the photo's folder is live-shared) is surfaced with a specific
+  // message rather than a generic error. ----
+  function handleDeletePhoto(photo: CardState) {
+    setDeletePhotoTarget(photo);
+    setDeletePhotoError(null);
+    setDeletePhotoBlocked(false);
+    setDeletePhotoBusy(false);
+  }
+
+  function closeDeletePhotoDialog() {
+    if (deletePhotoBusy) return;
+    setDeletePhotoTarget(null);
+    setDeletePhotoError(null);
+    setDeletePhotoBlocked(false);
+  }
+
+  async function confirmDeletePhoto() {
+    if (!deletePhotoTarget) return;
+    const photo = deletePhotoTarget;
+    setDeletePhotoBusy(true);
+    setDeletePhotoError(null);
+    setDeletePhotoBlocked(false);
+    try {
+      await photosApi.remove(photo.id);
+      setPhotos((prev) => prev.filter((p) => p.id !== photo.id));
+      setTotal((prev) => Math.max(0, prev - 1));
+      setSelectedIds((prev) => {
+        if (!prev.has(photo.id)) return prev;
+        const next = new Set(prev);
+        next.delete(photo.id);
+        return next;
+      });
+      if (selectedFolderId === UNFILED_FOLDER_ID) {
+        setUnfiledCount((prev) => Math.max(0, prev - 1));
+      } else if (selectedFolderId) {
+        setFolders((prev) =>
+          prev.map((f) => (f.id === selectedFolderId ? { ...f, photoCount: Math.max(0, f.photoCount - 1) } : f)),
+        );
+      }
+      setDeletePhotoTarget(null);
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      if (err instanceof ApiError && err.status === 409) {
+        setDeletePhotoBlocked(true);
+      } else {
+        setDeletePhotoError(err instanceof Error ? err.message : "Delete failed");
+      }
+      setDeletePhotoBusy(false);
+    }
+  }
+
   if (checking) return null;
 
   const selectedIsUnfiled = selectedFolderId === UNFILED_FOLDER_ID;
@@ -739,6 +1041,9 @@ export default function OrganizePage() {
           </Link>
           <Link href="/activity" className="dashboard-guests-link" data-testid="organize-activity-link">
             Activity
+          </Link>
+          <Link href="/trash" className="dashboard-guests-link" data-testid="organize-trash-link">
+            Trash
           </Link>
         </div>
       </div>
@@ -938,6 +1243,27 @@ export default function OrganizePage() {
                     Download all
                   </button>
                 )}
+                {photos.length > 0 && (
+                  <button
+                    type="button"
+                    className="organize-selectall-btn"
+                    data-testid="organize-select-all-page"
+                    onClick={handleSelectAllOnPage}
+                  >
+                    Select all on page
+                  </button>
+                )}
+                {photos.length > 0 && total > photos.length && (
+                  <button
+                    type="button"
+                    className="organize-selectall-link"
+                    data-testid="organize-select-all-folder"
+                    disabled={selectingAllAcrossPages}
+                    onClick={handleSelectAllAcrossPages}
+                  >
+                    {selectingAllAcrossPages ? "Selecting…" : `Select all ${total} photos in this folder`}
+                  </button>
+                )}
               </div>
 
               {gridError && <p className="organize-new-folder-error">{gridError}</p>}
@@ -949,18 +1275,40 @@ export default function OrganizePage() {
 
               {!gridLoading && photos.length > 0 && (
                 <>
-                  <div className="organize-grid" data-testid="organize-grid">
+                  <div
+                    className="organize-grid"
+                    data-testid="organize-grid"
+                    ref={gridRef}
+                    onMouseDown={handleGridMouseDown}
+                    onMouseMove={handleGridMouseMove}
+                    onMouseUp={handleGridMouseUp}
+                  >
                     {photos.map((photo, i) => (
                       <PhotoCard
                         key={photo.id}
                         photo={photo}
                         folders={folders}
                         currentFolderId={selectedFolder.id}
+                        selected={selectedIds.has(photo.id)}
                         onMove={handleMove}
                         onReclassify={handleReclassify}
                         onOpenViewer={() => setViewerIndex(i)}
+                        onSelectClick={(e) => handleCardSelectClick(photo.id, e)}
+                        onDeletePhoto={handleDeletePhoto}
                       />
                     ))}
+                    {marquee && (
+                      <div
+                        className="organize-marquee"
+                        style={{
+                          left: Math.min(marquee.startX, marquee.x),
+                          top: Math.min(marquee.startY, marquee.y),
+                          width: Math.abs(marquee.x - marquee.startX),
+                          height: Math.abs(marquee.y - marquee.startY),
+                          position: "fixed",
+                        }}
+                      />
+                    )}
                   </div>
 
                   <div className="organize-pagination">
@@ -1113,11 +1461,12 @@ export default function OrganizePage() {
                 <h3>Delete “{deleteDialogFolder.name}”?</h3>
                 <div className="organize-delete-reassure" data-testid="delete-reassure">
                   <p className="organize-delete-reassure-title">
-                    The {deleteDialogFolder.photoCount} photos in this folder will move to Unfiled — they are not
-                    deleted.
+                    This folder and its {deleteDialogFolder.photoCount} photos will move to Trash — they&apos;ll stay
+                    recoverable for 7 days.
                   </p>
                   <p className="organize-delete-reassure-sub">
-                    You can re-file them any time from the Unfiled bucket. Only the folder is removed.
+                    You can recover the folder (and its photos) any time from Trash before then. After 7 days
+                    they&apos;re permanently deleted.
                   </p>
                 </div>
                 {deleteError && (
@@ -1150,6 +1499,145 @@ export default function OrganizePage() {
           </div>
         </div>
       )}
+
+      {/* Persistent bottom action bar - appears once >=1 photo is selected
+          (design/wireframes/multi-select-delete.svg). */}
+      {selectedIds.size > 0 && (
+        <div className="organize-selectbar" data-testid="organize-selectbar">
+          <span className="organize-selectbar-count">{selectedIds.size} selected</span>
+          <button
+            type="button"
+            className="organize-selectbar-delete"
+            data-testid="organize-selectbar-delete"
+            onClick={openBulkDeleteConfirm}
+          >
+            Delete selected
+          </button>
+          <button
+            type="button"
+            className="organize-selectbar-cancel"
+            data-testid="organize-selectbar-cancel"
+            onClick={clearSelection}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Bulk-delete confirm - REVERSIBLE copy (opposite tone from the Trash
+          page's own permanent-delete confirms). Handles the T2 partial-result
+          case after the call resolves. */}
+      {bulkDeleteConfirmOpen && (
+        <div
+          className="organize-modal-backdrop"
+          data-testid="bulk-delete-dialog"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeBulkDeleteConfirm();
+          }}
+        >
+          <div className="organize-modal">
+            {bulkDeleteResult ? (
+              <>
+                <h3>Done</h3>
+                <p className="organize-modal-sub" data-testid="bulk-delete-result">
+                  {bulkDeleteResult.failedCount === 0
+                    ? `${bulkDeleteResult.deletedCount} photo${bulkDeleteResult.deletedCount === 1 ? "" : "s"} moved to Trash.`
+                    : `${bulkDeleteResult.deletedCount} deleted, ${bulkDeleteResult.failedCount} could not be deleted (already gone or currently shared with a guest).`}
+                </p>
+                <div className="organize-modal-actions">
+                  <button type="button" className="organize-modal-cancel" onClick={closeBulkDeleteConfirm}>
+                    Close
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>Delete {selectedIds.size} photos?</h3>
+                <p className="organize-modal-sub">
+                  They&apos;ll move to Trash and stay recoverable for 7 days.
+                </p>
+                {bulkDeleteError && <p className="organize-new-folder-error">{bulkDeleteError}</p>}
+                <div className="organize-modal-actions">
+                  <button
+                    type="button"
+                    className="organize-modal-delete"
+                    data-testid="bulk-delete-confirm"
+                    disabled={bulkDeleteBusy}
+                    onClick={confirmBulkDelete}
+                  >
+                    {bulkDeleteBusy ? "Deleting…" : `Delete (${selectedIds.size})`}
+                  </button>
+                  <button
+                    type="button"
+                    className="organize-modal-cancel"
+                    data-testid="bulk-delete-cancel"
+                    disabled={bulkDeleteBusy}
+                    onClick={closeBulkDeleteConfirm}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Single-photo delete confirm - same reversible tone; T2 409 flips to
+          a specific shared-with-guest message. */}
+      {deletePhotoTarget && (
+        <div
+          className="organize-modal-backdrop"
+          data-testid="delete-photo-dialog"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !deletePhotoBusy) closeDeletePhotoDialog();
+          }}
+        >
+          <div className="organize-modal">
+            {deletePhotoBlocked ? (
+              <div className="organize-shared-block" data-testid="delete-photo-shared-block">
+                <h3>Can&apos;t delete this photo</h3>
+                <p>Its folder is shared with a guest. Revoke the share first, then delete.</p>
+                <p className="organize-shared-block-sub">Server returned 409. Nothing was deleted.</p>
+                <div className="organize-modal-actions">
+                  <Link href="/guests" className="organize-shared-block-link">
+                    Go to Guests →
+                  </Link>
+                  <button type="button" className="organize-modal-cancel" onClick={closeDeletePhotoDialog}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h3>Delete &quot;{deletePhotoTarget.originalFilename}&quot;?</h3>
+                <p className="organize-modal-sub">It&apos;ll move to Trash and stay recoverable for 7 days.</p>
+                {deletePhotoError && <p className="organize-new-folder-error">{deletePhotoError}</p>}
+                <div className="organize-modal-actions">
+                  <button
+                    type="button"
+                    className="organize-modal-delete"
+                    data-testid="delete-photo-confirm"
+                    disabled={deletePhotoBusy}
+                    onClick={confirmDeletePhoto}
+                  >
+                    {deletePhotoBusy ? "Deleting…" : "Delete"}
+                  </button>
+                  <button
+                    type="button"
+                    className="organize-modal-cancel"
+                    data-testid="delete-photo-cancel"
+                    disabled={deletePhotoBusy}
+                    onClick={closeDeletePhotoDialog}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -1158,27 +1646,52 @@ function PhotoCard({
   photo,
   folders,
   currentFolderId,
+  selected,
   onMove,
   onReclassify,
   onOpenViewer,
+  onSelectClick,
+  onDeletePhoto,
 }: {
   photo: CardState;
   folders: Folder[];
   currentFolderId: string;
+  selected: boolean;
   onMove: (photoId: string, targetFolderId: string) => void;
   onReclassify: (photoId: string) => void;
   onOpenViewer: () => void;
+  onSelectClick: (e: React.MouseEvent) => void;
+  onDeletePhoto: (photo: CardState) => void;
 }) {
   const moveTargets = folders.filter((f) => f.id !== currentFolderId);
   const cardClass =
-    photo.status === "failed"
+    (photo.status === "failed"
       ? "organize-card failed"
       : photo.status === "duplicate"
         ? "organize-card duplicate"
-        : "organize-card";
+        : "organize-card") + (selected ? " organize-card-selected" : "");
 
   return (
-    <div className={cardClass} data-testid={`photo-card-${photo.id}`} data-status={photo.status}>
+    <div
+      className={cardClass}
+      data-testid={`photo-card-${photo.id}`}
+      data-status={photo.status}
+      data-select-card-id={photo.id}
+    >
+      {/* Selection affordance - visible on hover via CSS, always visible once
+          selected. A separate control from the thumbnail so opening the
+          viewer (click on the image) and toggling selection never collide. */}
+      <button
+        type="button"
+        className="organize-card-checkbox"
+        data-testid={`photo-select-${photo.id}`}
+        aria-label={selected ? "Deselect photo" : "Select photo"}
+        aria-pressed={selected}
+        onClick={onSelectClick}
+      >
+        {selected ? "✓" : ""}
+      </button>
+
       <button
         type="button"
         className="organize-card-thumb"
@@ -1252,6 +1765,14 @@ function PhotoCard({
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          className="organize-card-delete"
+          data-testid={`delete-photo-${photo.id}`}
+          onClick={() => onDeletePhoto(photo)}
+        >
+          Delete
+        </button>
       </div>
     </div>
   );
