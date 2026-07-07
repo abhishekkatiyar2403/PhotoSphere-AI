@@ -161,8 +161,25 @@ export default function GuestsPage() {
   return (
     <main className="guests-shell">
       <div className="organize-topbar">
-        <h1>PhotoSphere AI — Guests</h1>
+        <h1>
+          <Link href="/dashboard" className="organize-topbar-logo-link" data-testid="guests-dashboard-link">
+            PhotoSphere AI
+          </Link>{" "}
+          — Guests
+        </h1>
         <div className="dashboard-topbar-right">
+          <Link href="/upload" className="dashboard-guests-link" data-testid="guests-upload-link">
+            Upload
+          </Link>
+          <Link href="/organize" className="dashboard-guests-link" data-testid="guests-organize-link">
+            Organize
+          </Link>
+          <Link href="/browse" className="dashboard-guests-link" data-testid="guests-browse-link">
+            Browse
+          </Link>
+          <Link href="/search" className="dashboard-guests-link" data-testid="guests-search-link">
+            Search
+          </Link>
           <Link href="/activity" className="dashboard-guests-link" data-testid="guests-activity-link">
             Activity
           </Link>

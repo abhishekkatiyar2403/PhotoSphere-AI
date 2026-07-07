@@ -230,8 +230,19 @@ export default function SearchPage() {
   return (
     <main className="search-page">
       <div className="organize-topbar">
-        <h1>PhotoSphere AI — Search</h1>
+        <h1>
+          <Link href="/dashboard" className="organize-topbar-logo-link" data-testid="search-dashboard-link">
+            PhotoSphere AI
+          </Link>{" "}
+          — Search
+        </h1>
         <div className="dashboard-topbar-right">
+          <Link href="/upload" className="dashboard-guests-link" data-testid="search-upload-link">
+            Upload
+          </Link>
+          <Link href="/organize" className="dashboard-guests-link" data-testid="search-organize-link">
+            Organize
+          </Link>
           <Link href="/browse" className="dashboard-guests-link" data-testid="search-browse-link">
             Browse
           </Link>

@@ -173,10 +173,32 @@ export default function SharePage() {
   return (
     <main className="share-shell">
       <div className="organize-topbar">
-        <h1>PhotoSphere AI — Share</h1>
-        <Link href="/guests" style={{ color: "#cdd8f7", fontSize: 12, textDecoration: "none" }}>
-          Guests
-        </Link>
+        <h1>
+          <Link href="/dashboard" className="organize-topbar-logo-link" data-testid="share-dashboard-link">
+            PhotoSphere AI
+          </Link>{" "}
+          — Share
+        </h1>
+        <div className="dashboard-topbar-right">
+          <Link href="/upload" className="dashboard-guests-link" data-testid="share-upload-link">
+            Upload
+          </Link>
+          <Link href="/organize" className="dashboard-guests-link" data-testid="share-organize-link">
+            Organize
+          </Link>
+          <Link href="/browse" className="dashboard-guests-link" data-testid="share-browse-link">
+            Browse
+          </Link>
+          <Link href="/search" className="dashboard-guests-link" data-testid="share-search-link">
+            Search
+          </Link>
+          <Link href="/guests" className="dashboard-guests-link" data-testid="share-guests-link">
+            Guests
+          </Link>
+          <Link href="/activity" className="dashboard-guests-link" data-testid="share-activity-link">
+            Activity
+          </Link>
+        </div>
       </div>
 
       <div className="share-content">

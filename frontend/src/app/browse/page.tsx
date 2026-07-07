@@ -15,6 +15,7 @@
 // shared PhotoViewer on thumbnail click.
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
@@ -258,7 +259,29 @@ function BrowsePageInner() {
   return (
     <main className="organize-shell">
       <div className="organize-topbar">
-        <h1>PhotoSphere AI — Browse</h1>
+        <h1>
+          <Link href="/dashboard" className="organize-topbar-logo-link" data-testid="browse-dashboard-link">
+            PhotoSphere AI
+          </Link>{" "}
+          — Browse
+        </h1>
+        <div className="dashboard-topbar-right">
+          <Link href="/upload" className="dashboard-guests-link" data-testid="browse-upload-link">
+            Upload
+          </Link>
+          <Link href="/organize" className="dashboard-guests-link" data-testid="browse-organize-link">
+            Organize
+          </Link>
+          <Link href="/search" className="dashboard-guests-link" data-testid="browse-search-link">
+            Search
+          </Link>
+          <Link href="/guests" className="dashboard-guests-link" data-testid="browse-guests-link">
+            Guests
+          </Link>
+          <Link href="/activity" className="dashboard-guests-link" data-testid="browse-activity-link">
+            Activity
+          </Link>
+        </div>
       </div>
 
       <div className="organize-body">

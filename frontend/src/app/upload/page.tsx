@@ -6,6 +6,7 @@
 // the polished upload UI is Week 7-8 scope and out of bounds for this pass.
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authApi, photosApi } from "@/lib/api";
 
@@ -106,8 +107,34 @@ export default function UploadPage() {
   if (checking) return null;
 
   return (
-    <main style={{ padding: 24 }}>
-      <h1>Upload a photo (test page)</h1>
+    <main>
+      <div className="organize-topbar">
+        <h1>
+          <Link href="/dashboard" className="organize-topbar-logo-link" data-testid="upload-dashboard-link">
+            PhotoSphere AI
+          </Link>{" "}
+          — Upload
+        </h1>
+        <div className="dashboard-topbar-right">
+          <Link href="/organize" className="dashboard-guests-link" data-testid="upload-organize-link">
+            Organize
+          </Link>
+          <Link href="/browse" className="dashboard-guests-link" data-testid="upload-browse-link">
+            Browse
+          </Link>
+          <Link href="/search" className="dashboard-guests-link" data-testid="upload-search-link">
+            Search
+          </Link>
+          <Link href="/guests" className="dashboard-guests-link" data-testid="upload-guests-link">
+            Guests
+          </Link>
+          <Link href="/activity" className="dashboard-guests-link" data-testid="upload-activity-link">
+            Activity
+          </Link>
+        </div>
+      </div>
+
+      <div style={{ padding: 24 }}>
       <p>Minimal round-trip proof only - polished upload UI is Week 7-8 scope.</p>
 
       <input
@@ -160,6 +187,7 @@ export default function UploadPage() {
             )}
           </>
         )}
+      </div>
       </div>
     </main>
   );

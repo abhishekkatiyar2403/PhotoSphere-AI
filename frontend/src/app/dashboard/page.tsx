@@ -146,6 +146,15 @@ export default function DashboardPage() {
       <div className="organize-topbar">
         <h1>PhotoSphere AI — Dashboard</h1>
         <div className="dashboard-topbar-right">
+          <Link href="/upload" className="dashboard-guests-link" data-testid="dashboard-upload-link">
+            Upload
+          </Link>
+          <Link href="/organize" className="dashboard-guests-link" data-testid="dashboard-organize-link">
+            Organize
+          </Link>
+          <Link href="/browse" className="dashboard-guests-link" data-testid="dashboard-browse-link">
+            Browse
+          </Link>
           <Link href="/search" className="dashboard-guests-link" data-testid="dashboard-search-link">
             Search
           </Link>

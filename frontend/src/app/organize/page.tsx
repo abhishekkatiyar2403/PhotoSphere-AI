@@ -711,7 +711,29 @@ export default function OrganizePage() {
   return (
     <main className="organize-shell">
       <div className="organize-topbar">
-        <h1>PhotoSphere AI — Organize</h1>
+        <h1>
+          <Link href="/dashboard" className="organize-topbar-logo-link" data-testid="organize-dashboard-link">
+            PhotoSphere AI
+          </Link>{" "}
+          — Organize
+        </h1>
+        <div className="dashboard-topbar-right">
+          <Link href="/upload" className="dashboard-guests-link" data-testid="organize-upload-link">
+            Upload
+          </Link>
+          <Link href="/browse" className="dashboard-guests-link" data-testid="organize-browse-link">
+            Browse
+          </Link>
+          <Link href="/search" className="dashboard-guests-link" data-testid="organize-search-link">
+            Search
+          </Link>
+          <Link href="/guests" className="dashboard-guests-link" data-testid="organize-guests-link">
+            Guests
+          </Link>
+          <Link href="/activity" className="dashboard-guests-link" data-testid="organize-activity-link">
+            Activity
+          </Link>
+        </div>
       </div>
 
       <div className="organize-body">
