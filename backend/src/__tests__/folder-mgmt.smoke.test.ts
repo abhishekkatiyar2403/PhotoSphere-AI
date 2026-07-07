@@ -405,31 +405,48 @@ describe("POST /api/folders/:id/merge", () => {
 // Delete — DELETE /api/folders/:id
 // ---------------------------------------------------------------------------
 describe("DELETE /api/folders/:id", () => {
-  it("moves photos to Unfiled (folderId null), keeps photo rows, deletes folder, audits", async () => {
+  // specs/trash-system.md REVISES this endpoint to a SOFT delete: sets
+  // deletedAt on the folder, does NOT touch photos (T-folder-photos — they
+  // keep their folderId, hidden transitively), does NOT touch photoCount,
+  // and drops the old `photosOrphaned` field (nothing is orphaned anymore).
+  it("soft-deletes the folder (sets deletedAt), leaves photos + photoCount untouched, audits", async () => {
     if (skipInfra()) return;
     const f = await seedFolder({ collectionId, ownerId, name: `del-src-${stamp}`, photos: 4 });
 
     const res = await request(app).delete(`/api/folders/${f.id}`).set("Cookie", ownerCookie);
     expect(res.status).toBe(200);
     expect(res.body.deleted).toBe(true);
-    expect(res.body.photosOrphaned).toBe(4);
+    expect(res.body.deletedAt).toBeTruthy();
+    expect(res.body.purgeAt).toBeTruthy();
+    expect(res.body.photosOrphaned).toBeUndefined();
 
-    // Folder row gone.
-    expect(await prisma.folder.findUnique({ where: { id: f.id } })).toBeNull();
+    // Folder row SURVIVES, now trashed (deletedAt set) — not hard-deleted.
+    const folderRow = await prisma.folder.findUnique({ where: { id: f.id } });
+    expect(folderRow).not.toBeNull();
+    expect(folderRow?.deletedAt).not.toBeNull();
+    // photoCount untouched.
+    expect(folderRow?.photoCount).toBe(4);
 
-    // Photo rows SURVIVE (not cascade-deleted) and now have folderId = null.
+    // Photo rows SURVIVE and are NOT individually marked deleted — they keep
+    // their folderId, hidden transitively by the folder's own deletedAt.
     for (const pid of f.photoIds) {
       const p = await prisma.photo.findUnique({ where: { id: pid } });
       expect(p).not.toBeNull();
-      expect(p?.folderId).toBeNull();
+      expect(p?.folderId).toBe(f.id);
+      expect(p?.deletedAt).toBeNull();
       // The original MinIO key is untouched (row still points at it).
       expect(p?.s3Key).toBeTruthy();
-      // A GET /api/photos/:id still resolves the (surviving) row.
+      // GET /api/photos/:id now 404s (transitively hidden via the trashed folder).
       const detail = await request(app).get(`/api/photos/${pid}`).set("Cookie", ownerCookie);
-      expect(detail.status).toBe(200);
+      expect(detail.status).toBe(404);
     }
 
-    // folder_deleted audit row with the right shape.
+    // GET /api/folders/:id/photos on the now-trashed folder also 404s.
+    const listing = await request(app).get(`/api/folders/${f.id}/photos`).set("Cookie", ownerCookie);
+    expect(listing.status).toBe(404);
+
+    // folder_deleted audit row with the right shape (soft: true, no
+    // photosOrphaned — the photoCount at delete-time is captured instead).
     const rows = await prisma.auditLog.findMany({
       where: { ownerId, action: "folder_deleted", resourceId: f.id },
     });
@@ -437,7 +454,25 @@ describe("DELETE /api/folders/:id", () => {
     const meta = rows[0].metadata as Record<string, unknown>;
     expect(rows[0].actorType).toBe("owner");
     expect(meta.folderName).toBe(`del-src-${stamp}`);
-    expect(meta.photosOrphaned).toBe(4);
+    expect(meta.soft).toBe(true);
+    expect(meta.photoCount).toBe(4);
+
+    // 404 on a second delete attempt (already-trashed = indistinguishable
+    // from not-found).
+    const again = await request(app).delete(`/api/folders/${f.id}`).set("Cookie", ownerCookie);
+    expect(again.status).toBe(404);
+
+    // Restoring brings everything back at once — zero photo-level bookkeeping.
+    const restore = await request(app).post(`/api/folders/${f.id}/restore`).set("Cookie", ownerCookie);
+    expect(restore.status).toBe(200);
+    expect(restore.body.restored).toBe(true);
+    const restoredRow = await prisma.folder.findUnique({ where: { id: f.id } });
+    expect(restoredRow?.deletedAt).toBeNull();
+    expect(restoredRow?.photoCount).toBe(4);
+    for (const pid of f.photoIds) {
+      const detail = await request(app).get(`/api/photos/${pid}`).set("Cookie", ownerCookie);
+      expect(detail.status).toBe(200);
+    }
   });
 
   it("404 deleting a folder owned by a different owner, no effect", async () => {
@@ -461,16 +496,21 @@ describe("DELETE /api/folders/:id", () => {
     expect(await prisma.folder.findUnique({ where: { id: f.id } })).not.toBeNull();
     expect(await liveCount(f.id)).toBe(3);
 
-    // Revoke → delete now succeeds and photos orphan to Unfiled.
+    // Revoke → delete now succeeds (soft-delete: folder trashed, photos stay
+    // filed at this same folder, still no orphaning).
     await prisma.folderPermission.updateMany({
       where: { folderId: f.id },
       data: { revokedAt: new Date() },
     });
     const ok = await request(app).delete(`/api/folders/${f.id}`).set("Cookie", ownerCookie);
     expect(ok.status).toBe(200);
-    expect(ok.body.photosOrphaned).toBe(3);
-    expect(await prisma.folder.findUnique({ where: { id: f.id } })).toBeNull();
-    expect(await prisma.photo.count({ where: { ownerId, folderId: null, id: { in: f.photoIds } } })).toBe(3);
+    expect(ok.body.photosOrphaned).toBeUndefined();
+    const folderRow = await prisma.folder.findUnique({ where: { id: f.id } });
+    expect(folderRow).not.toBeNull();
+    expect(folderRow?.deletedAt).not.toBeNull();
+    expect(
+      await prisma.photo.count({ where: { ownerId, folderId: f.id, id: { in: f.photoIds } } }),
+    ).toBe(3);
   });
 
   it("401 without a session", async () => {
@@ -515,38 +555,60 @@ describe("GET /api/photos/unfiled — surfaces folder-delete orphans (P4 F2 reac
     }
   });
 
-  it("a `done` photo orphaned by a folder DELETE now appears in /unfiled (regression: it did NOT before this fix)", async () => {
+  // specs/trash-system.md REVISES DELETE /api/folders/:id to a SOFT delete
+  // that no longer orphans photos to Unfiled (T-folder-photos — photos keep
+  // their folderId, hidden transitively instead). The original P4 regression
+  // this test protected against (a `done`, folderId-null orphan being
+  // dropped by the old status-based /unfiled filter) is still a live risk
+  // for ANY other path that can produce that same row shape, so this test is
+  // adapted to seed the exact row shape directly via Prisma rather than
+  // through folder-delete (which can no longer produce it).
+  it("a `done`, folderId-null photo appears in /unfiled (P4 regression, seeded directly since folder-delete no longer orphans)", async () => {
     if (skipInfra()) return;
-    // Seed a folder holding a single `done` photo, then delete the folder (P4).
-    const f = await seedFolder({
-      collectionId: unfiledCollectionId,
-      ownerId: unfiledOwnerId,
-      name: `unfiled-del-${stamp}`,
-      photos: 1,
+    const orphan = await prisma.photo.create({
+      data: {
+        ownerId: unfiledOwnerId,
+        s3Key: `seed/${unfiledOwnerId}/orphan.jpg`,
+        originalFilename: `orphan-${stamp}.jpg`,
+        mimeType: "image/jpeg",
+        sizeBytes: 1234,
+        aiClassificationStatus: "done",
+        collectionId: unfiledCollectionId,
+        folderId: null,
+      },
     });
-    const orphanId = f.photoIds[0];
-
-    // Before delete: the photo is filed, so it is NOT in /unfiled.
-    const before = await request(app).get("/api/photos/unfiled").set("Cookie", unfiledCookie);
-    expect(before.status).toBe(200);
-    expect(before.body.photos.map((p: { id: string }) => p.id)).not.toContain(orphanId);
-
-    const del = await request(app).delete(`/api/folders/${f.id}`).set("Cookie", unfiledCookie);
-    expect(del.status).toBe(200);
-    expect(del.body.photosOrphaned).toBe(1);
-
-    // The orphaned photo is folderId null + status 'done' — the exact case the
-    // old filter dropped. It must now surface.
-    const p = await prisma.photo.findUnique({ where: { id: orphanId } });
-    expect(p?.folderId).toBeNull();
-    expect(p?.aiClassificationStatus).toBe("done");
 
     const after = await request(app).get("/api/photos/unfiled").set("Cookie", unfiledCookie);
     expect(after.status).toBe(200);
     const ids = after.body.photos.map((x: { id: string }) => x.id);
-    expect(ids).toContain(orphanId);
-    const card = after.body.photos.find((x: { id: string }) => x.id === orphanId);
+    expect(ids).toContain(orphan.id);
+    const card = after.body.photos.find((x: { id: string }) => x.id === orphan.id);
     expect(card.status).toBe("done");
+  });
+
+  it("specs/trash-system.md: DELETE /api/folders/:id no longer orphans its photos to Unfiled (soft-delete instead)", async () => {
+    if (skipInfra()) return;
+    const f = await seedFolder({
+      collectionId: unfiledCollectionId,
+      ownerId: unfiledOwnerId,
+      name: `unfiled-del-nolonger-${stamp}`,
+      photos: 1,
+    });
+    const photoId = f.photoIds[0];
+
+    const del = await request(app).delete(`/api/folders/${f.id}`).set("Cookie", unfiledCookie);
+    expect(del.status).toBe(200);
+    expect(del.body.photosOrphaned).toBeUndefined();
+
+    // The photo keeps its folderId — it is NOT in /unfiled (hidden
+    // transitively via the trashed folder instead of being orphaned).
+    const p = await prisma.photo.findUnique({ where: { id: photoId } });
+    expect(p?.folderId).toBe(f.id);
+    expect(p?.deletedAt).toBeNull();
+
+    const after = await request(app).get("/api/photos/unfiled").set("Cookie", unfiledCookie);
+    expect(after.status).toBe(200);
+    expect(after.body.photos.map((x: { id: string }) => x.id)).not.toContain(photoId);
   });
 
   it("a filed `done` photo (still in a folder) NEVER appears in /unfiled", async () => {
