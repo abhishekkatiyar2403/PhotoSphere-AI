@@ -1,5 +1,6 @@
 import {
   CreateBucketCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
@@ -79,6 +80,34 @@ export async function getObjectStream(key: string): Promise<Readable> {
   // In Node the SDK v3 Body is a Readable stream (IncomingMessage). The union
   // type includes browser ReadableStream/Blob, which never occur under Node.
   return body as Readable;
+}
+
+/**
+ * Permanently delete one MinIO object. Used ONLY by the trash system's
+ * permanent-purge path (specs/trash-system.md, routes/trash.ts + the daily
+ * auto-purge job) — never by the soft-delete endpoints, which never touch
+ * storage.
+ *
+ * A not-found object is treated as a NO-OP SUCCESS, not an error (mirrors
+ * getPresignedGetUrl's "omit rather than error" thumbnail philosophy): the
+ * purge job must be safe to run twice on the same already-purged item
+ * (idempotency, specs/trash-system.md hard requirement) without erroring on
+ * an object that's already gone. S3's DeleteObjectCommand is itself already
+ * idempotent by spec (deleting a nonexistent key succeeds silently), but this
+ * defensively swallows a 404/NoSuchKey-shaped error too in case MinIO's
+ * behavior ever differs — any OTHER error still propagates.
+ */
+export async function deleteObject(key: string): Promise<void> {
+  try {
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+  } catch (err) {
+    const code =
+      (err as { name?: string; Code?: string })?.name ?? (err as { Code?: string })?.Code;
+    if (code === "NoSuchKey" || code === "NotFound") {
+      return; // already gone — no-op success
+    }
+    throw err;
+  }
 }
 
 export { BUCKET };

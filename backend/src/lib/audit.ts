@@ -51,10 +51,27 @@ export type AuditAction =
   // audited (cosmetic, high-frequency — matches the AP1 owner-content exclusion).
   | "folder_merged"
   | "folder_deleted"
+  // specs/trash-system.md: photo delete never shipped under
+  // photo-deletion.md (superseded before it was built) — this is the FIRST
+  // time `photo_deleted` is added, now directly as a soft-delete/trash action
+  // (mirrors folder_deleted's existing "destructive, audited" precedent).
+  | "photo_deleted"
   // specs/folder-mgmt-download-search.md P5 (Z7): a GUEST bulk folder-zip
   // download — the "who downloaded everything" differentiator. The owner's own
   // zip is NOT audited (owner-on-own-data, per AP1). Success-path only.
-  | "folder_downloaded";
+  | "folder_downloaded"
+  // specs/trash-system.md — `photo_deleted`/`folder_deleted` above are REUSED
+  // (now semantically "moved to trash", not permanent). These four are new,
+  // additive: restoring an item, and permanently purging one (skip-the-wait
+  // manual purge OR the daily auto-purge job — distinguished only by
+  // `metadata.trigger: "manual" | "auto_purge"`, not by a separate action
+  // name). `trash_emptied` is ONE summary row per "empty trash" call, not
+  // one row per item purged (non-load-bearing granularity choice).
+  | "photo_restored"
+  | "folder_restored"
+  | "photo_permanently_deleted"
+  | "folder_permanently_deleted"
+  | "trash_emptied";
 
 export type AuditActorType = "owner" | "guest";
 

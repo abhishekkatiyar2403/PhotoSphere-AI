@@ -58,12 +58,18 @@ model Collection {
 // by the worker's folder-assignment step, or user-created ("custom") via
 // POST /api/collections/:id/folders. Create-only this pass (no rename/merge/delete).
 model Folder {
-  id           String   @id @default(uuid())
-  collectionId String   @map("collection_id")
+  id           String    @id @default(uuid())
+  collectionId String    @map("collection_id")
   name         String // 'People', 'Nature', ..., 'Uncategorized', or custom
-  categoryType String   @default("ai_generated") @map("category_type") // ai_generated | custom
-  photoCount   Int      @default(0) @map("photo_count")
-  createdAt    DateTime @default(now()) @map("created_at")
+  categoryType String    @default("ai_generated") @map("category_type") // ai_generated | custom
+  photoCount   Int       @default(0) @map("photo_count")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  // specs/trash-system.md — soft-delete ("trash"), 7-day retention, then
+  // auto-purge. Null = live. Set by DELETE /api/folders/:id, cleared by
+  // POST /api/folders/:id/restore. Photos are NOT individually marked
+  // deleted when their folder is trashed (T-folder-photos) — they're hidden
+  // transitively by every listing query checking this column via the folder.
+  deletedAt DateTime? @map("deleted_at")
 
   collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   photos     Photo[]
@@ -71,8 +77,20 @@ model Folder {
   // folder_permissions.folder_id; no physical column added to `folders`.
   permissions FolderPermission[]
 
-  @@unique([collectionId, name]) // race-safe find-or-create under worker concurrency 2
+  // T7 (specs/trash-system.md, FINAL DECISION 3): this is DELIBERATELY a
+  // plain non-unique index, NOT `@@unique([collectionId, name])`. The REAL
+  // uniqueness constraint is a Postgres PARTIAL unique index —
+  // `CREATE UNIQUE INDEX folder_active_name_unique ON folders (collection_id,
+  // name) WHERE deleted_at IS NULL;` — added by hand-editing the raw SQL of
+  // migration `20260708_add_trash_system` (Prisma's schema DSL cannot express
+  // a `WHERE` clause on a unique index). DO NOT "fix" this back to a plain
+  // `@@unique` — that would make a trashed folder occupy its name slot again,
+  // reintroducing the exact 409-on-recreate friction this design removes.
+  // This @@index exists ONLY for query performance on (collectionId, name)
+  // lookups (e.g. the worker's find-or-create); it enforces NOTHING by itself.
+  @@index([collectionId, name])
   @@index([collectionId])
+  @@index([deletedAt]) // purge-job query across all owners (specs/trash-system.md)
   @@map("folders")
 }
 
@@ -135,6 +153,13 @@ model Photo {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  // specs/trash-system.md — soft-delete ("trash"), 7-day retention, then
+  // auto-purge. Null = live. Set by DELETE /api/photos/:id (and bulk-delete),
+  // cleared by POST /api/photos/:id/restore. A photo can ALSO be hidden
+  // transitively if its FOLDER has deletedAt set (T-folder-photos) — every
+  // listing query must check both.
+  deletedAt DateTime? @map("deleted_at")
+
   owner      User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   jobs       ProcessingJob[]
   collection Collection?     @relation(fields: [collectionId], references: [id])
@@ -143,6 +168,7 @@ model Photo {
   @@index([ownerId])
   @@index([ownerId, aiClassificationStatus])
   @@index([ownerId, fileSha256])
+  @@index([ownerId, deletedAt]) // trash listing + purge-job query (specs/trash-system.md)
   @@map("photos")
 }
 

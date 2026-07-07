@@ -54,6 +54,46 @@ export const folderMergeSchema = z.object({
 export type FolderRenameInput = z.infer<typeof folderRenameSchema>;
 export type FolderMergeInput = z.infer<typeof folderMergeSchema>;
 
+// --- specs/trash-system.md ---
+
+// POST /api/photos/bulk-delete — soft-delete many photos at once (PD5,
+// reused unchanged: partial-success, per-id result list). Non-empty, max 100
+// (house rule: hard cap, not a silent clamp).
+export const bulkDeletePhotosSchema = z.object({
+  photoIds: z
+    .array(z.string().uuid("each photoId must be a UUID"))
+    .min(1, "photoIds must not be empty")
+    .max(100, "photoIds must not exceed 100"),
+});
+
+// GET /api/trash — paginated, per-section limit/offset (same convention as
+// folderPhotosQuerySchema/searchQuerySchema — limit > 100 is a 400, not a clamp).
+export const trashListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+// DELETE /api/trash/:type/:id — :type is exactly "photo" or "folder"; an
+// unknown value is a 400 (Zod enum), never silently coerced.
+export const trashTypeParamSchema = z.enum(["photo", "folder"]);
+
+// POST /api/folders/:id/restore — FINAL DECISION 4 (specs/trash-system.md):
+// on a name collision, the caller may resolve it inline via onConflict.
+// `newName` only required/used when onConflict === "rename" (checked in the
+// route, since Zod's cross-field refine adds complexity for a 2-branch case
+// already validated explicitly in the handler).
+export const folderRestoreSchema = z
+  .object({
+    onConflict: z.enum(["merge", "rename"]).optional(),
+    newName: z.string().trim().min(1, "Folder name is required").max(255, "Folder name too long").optional(),
+  })
+  .optional();
+
+export type BulkDeletePhotosInput = z.infer<typeof bulkDeletePhotosSchema>;
+export type TrashListQuery = z.infer<typeof trashListQuerySchema>;
+export type TrashTypeParam = z.infer<typeof trashTypeParamSchema>;
+export type FolderRestoreInput = z.infer<typeof folderRestoreSchema>;
+
 // --- specs/folder-mgmt-download-search.md PART P6 (basic search) ---
 
 // S1: the known AI categories. `category` is matched against the photo's FOLDER
@@ -135,7 +175,11 @@ export type ApproveAccessRequestInput = z.infer<typeof approveAccessRequestSchem
 // --- specs/audit-and-polish.md §A4 ---
 
 // The enumerated audit actions (specs/audit-and-polish.md §A2). Keep in sync
-// with AuditAction in lib/audit.ts.
+// with AuditAction in lib/audit.ts. Note: this list pre-existed WITHOUT
+// folder_merged/folder_deleted/folder_downloaded (a pre-existing gap, not
+// introduced by this pass) — the trash-system actions below are added for
+// GET /api/audit's ?action= filter since "I recovered/purged something" is
+// exactly the kind of thing an owner would want to filter their trail by.
 export const AUDIT_ACTIONS = [
   "share_created",
   "access_requested",
@@ -144,6 +188,12 @@ export const AUDIT_ACTIONS = [
   "guest_revoked",
   "photo_viewed",
   "photo_downloaded",
+  "photo_deleted",
+  "photo_restored",
+  "folder_restored",
+  "photo_permanently_deleted",
+  "folder_permanently_deleted",
+  "trash_emptied",
 ] as const;
 
 // GET /api/audit — owner-scoped, paginated, filterable (specs/audit-and-polish
