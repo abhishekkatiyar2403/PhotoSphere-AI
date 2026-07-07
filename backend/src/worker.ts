@@ -16,7 +16,13 @@ import { findExactDuplicateOriginal, findNearDuplicateOriginal } from "./lib/ded
 import { computePHash } from "./lib/phash";
 import { prisma } from "./lib/prisma";
 import { serializableTransaction } from "./lib/serializableTransaction";
-import { PhotoProcessingJobData, PHOTO_PROCESSING_QUEUE_NAME } from "./lib/queue";
+import {
+  PhotoProcessingJobData,
+  PHOTO_PROCESSING_QUEUE_NAME,
+  registerTrashPurgeJob,
+  TRASH_PURGE_JOB_NAME,
+} from "./lib/queue";
+import { runTrashPurgeJob } from "./lib/trashPurgeJob";
 import { ensureBucketExists, getPresignedGetUrl, putObject } from "./lib/storage";
 import { thumbnailKey } from "./routes/photos";
 
@@ -108,11 +114,20 @@ async function findOrCreateDefaultCollection(ownerId: string): Promise<Collectio
 
 /**
  * Race-safe find-or-create of a category folder inside a collection, same
- * catch-unique-violation-and-refetch pattern via @@unique([collectionId, name]).
+ * catch-unique-violation-and-refetch pattern the old plain
+ * @@unique([collectionId, name]) enabled — but specs/trash-system.md's T7
+ * (FINAL DECISION 3) replaced that with a PARTIAL unique index
+ * (`WHERE deleted_at IS NULL`), so `collectionId_name` no longer exists as a
+ * compound-unique Prisma input. Look up only the LIVE folder with this name
+ * (findFirst + deletedAt: null) — a TRASHED folder with the same name must
+ * NOT be "found" and silently reused by the worker (that would resurrect a
+ * trashed folder's identity without going through restore); the create
+ * attempt below will succeed even if a trashed same-named row exists, since
+ * the partial unique index only blocks two LIVE rows from colliding.
  */
 async function findOrCreateFolder(collectionId: string, name: string): Promise<Folder> {
-  const where = { collectionId_name: { collectionId, name } };
-  const existing = await prisma.folder.findUnique({ where });
+  const where = { collectionId, name, deletedAt: null } as const;
+  const existing = await prisma.folder.findFirst({ where });
   if (existing) return existing;
 
   try {
@@ -121,7 +136,7 @@ async function findOrCreateFolder(collectionId: string, name: string): Promise<F
     });
   } catch (err) {
     if (isUniqueViolation(err)) {
-      const winner = await prisma.folder.findUnique({ where });
+      const winner = await prisma.folder.findFirst({ where });
       if (winner) return winner;
     }
     throw err;
@@ -351,6 +366,10 @@ async function processReclassify(photoId: string): Promise<void> {
 async function main() {
   await ensureBucketExists();
 
+  // specs/trash-system.md T4: idempotent registration — safe on every boot,
+  // upserts rather than duplicating the scheduled job.
+  await registerTrashPurgeJob();
+
   const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
     maxRetriesPerRequest: null,
   });
@@ -358,6 +377,19 @@ async function main() {
   const worker = new Worker<PhotoProcessingJobData>(
     PHOTO_PROCESSING_QUEUE_NAME,
     async (job: Job<PhotoProcessingJobData>) => {
+      // specs/trash-system.md T4: the repeatable purge job has NO
+      // processing_jobs bookkeeping (it isn't tied to a single Photo row —
+      // it's a batch sweep) and no photoId. Handled first, before the
+      // by-job-id bookkeeping below which assumes a photoId-carrying job.
+      if (job.name === TRASH_PURGE_JOB_NAME) {
+        const result = await runTrashPurgeJob();
+        // eslint-disable-next-line no-console
+        console.log(
+          `[worker] trash-purge job completed: ${result.photosPurged} photo(s), ${result.foldersPurged} folder(s) permanently purged`,
+        );
+        return;
+      }
+
       // Bookkeeping keyed by BullMQ job id === ProcessingJob PK (see
       // updateProcessingJobById above).
       if (!job.id) {
@@ -369,38 +401,49 @@ async function main() {
       });
 
       if (job.name === "reclassify") {
-        await processReclassify(job.data.photoId);
+        await processReclassify((job.data as { photoId: string }).photoId);
       } else {
-        await processPhotoPipeline(job.data.photoId);
+        await processPhotoPipeline((job.data as { photoId: string }).photoId);
       }
     },
     { connection, concurrency: 2 },
   );
 
   worker.on("completed", async (job) => {
+    // specs/trash-system.md T4: the purge job has no processing_jobs row and
+    // no photoId — its own success/failure logging happens inside the
+    // processor above (runTrashPurgeJob's caller), not here.
+    if (job.name === TRASH_PURGE_JOB_NAME) return;
     if (!job.id) return;
     await updateProcessingJobById(job.id, { status: "completed" });
     // eslint-disable-next-line no-console
-    console.log(`[worker] completed ${job.name} job for photo ${job.data.photoId}`);
+    console.log(`[worker] completed ${job.name} job for photo ${(job.data as { photoId?: string }).photoId}`);
   });
 
   worker.on("failed", async (job, err) => {
-    if (!job || !job.id) return;
+    if (!job) return;
+    if (job.name === TRASH_PURGE_JOB_NAME) {
+      // eslint-disable-next-line no-console
+      console.error(`[worker] trash-purge job failed (attempt ${job.attemptsMade}):`, err.message);
+      return;
+    }
+    if (!job.id) return;
     const isFinalAttempt = job.attemptsMade >= (job.opts.attempts ?? 3);
     await updateProcessingJobById(job.id, {
       status: isFinalAttempt ? "failed" : "queued",
       attempts: job.attemptsMade,
       errorMessage: err.message,
     });
-    if (isFinalAttempt) {
+    const photoId = (job.data as { photoId?: string }).photoId;
+    if (isFinalAttempt && photoId) {
       await prisma.photo.updateMany({
-        where: { id: job.data.photoId },
+        where: { id: photoId },
         data: { aiClassificationStatus: "failed" },
       });
     }
     // eslint-disable-next-line no-console
     console.error(
-      `[worker] ${job.name} job failed for photo ${job.data.photoId} (attempt ${job.attemptsMade}):`,
+      `[worker] ${job.name} job failed for photo ${photoId} (attempt ${job.attemptsMade}):`,
       err.message,
     );
   });
