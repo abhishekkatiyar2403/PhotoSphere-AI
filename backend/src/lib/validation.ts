@@ -94,6 +94,22 @@ export type TrashListQuery = z.infer<typeof trashListQuerySchema>;
 export type TrashTypeParam = z.infer<typeof trashTypeParamSchema>;
 export type FolderRestoreInput = z.infer<typeof folderRestoreSchema>;
 
+// POST /api/photos/:id/restore — specs/trash-system.md FINAL DECISION 5,
+// REVISED 2026-07-09: the trashed folder is never touched by a single-photo
+// restore. `onConflict` here resolves against a LIVE same-named folder found
+// in the same collection as the (untouched) trashed folder the photo used to
+// belong to — semantically distinct from folderRestoreSchema's "merge"/
+// "rename" (there is no merge/rename of the trashed folder happening here at
+// all, just where the ONE photo lands).
+export const photoRestoreSchema = z
+  .object({
+    onConflict: z.enum(["existing", "new"]).optional(),
+    newName: z.string().trim().min(1, "Folder name is required").max(255, "Folder name too long").optional(),
+  })
+  .optional();
+
+export type PhotoRestoreInput = z.infer<typeof photoRestoreSchema>;
+
 // --- specs/folder-mgmt-download-search.md PART P6 (basic search) ---
 
 // S1: the known AI categories. `category` is matched against the photo's FOLDER

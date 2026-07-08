@@ -516,6 +516,42 @@ async function findLiveConflict(collectionId: string, name: string, excludeId: s
   });
 }
 
+// Exported for routes/photos.ts's photo-restore handler (specs/trash-system.md
+// FINAL DECISION 5, REVISED 2026-07-09) — it needs the SAME "is there a live
+// folder with this name in this collection" check, but the trashed folder
+// itself is never excluded/touched there since restore never modifies it.
+export async function findLiveFolderByName(collectionId: string, name: string) {
+  return prisma.folder.findFirst({
+    where: { collectionId, name, deletedAt: null },
+    select: { id: true, name: true },
+  });
+}
+
+// Generates a non-colliding "<base> (recovered)" / "(recovered 2)" / ... name
+// for a brand-new folder, used by both folder-restore's future needs and
+// photo-restore's REVISED FINAL DECISION 5 auto-create-new-folder path.
+// Capped at MAX_RECOVERED_NAME_ATTEMPTS to avoid an unbounded loop in the
+// pathological case where all suffixes are already taken.
+const MAX_RECOVERED_NAME_ATTEMPTS = 20;
+
+export async function generateNonCollidingRecoveredName(
+  collectionId: string,
+  baseName: string,
+): Promise<string> {
+  for (let attempt = 0; attempt <= MAX_RECOVERED_NAME_ATTEMPTS; attempt++) {
+    const candidate =
+      attempt === 0 ? `${baseName} (recovered)` : `${baseName} (recovered ${attempt + 1})`;
+    const existing = await prisma.folder.findFirst({
+      where: { collectionId, name: candidate, deletedAt: null },
+      select: { id: true },
+    });
+    if (!existing) return candidate;
+  }
+  throw new Error(
+    `generateNonCollidingRecoveredName: exhausted ${MAX_RECOVERED_NAME_ATTEMPTS} attempts for base "${baseName}" in collection ${collectionId}`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // PART P5 — bulk "download all" / folder zip (owner)
 // ---------------------------------------------------------------------------

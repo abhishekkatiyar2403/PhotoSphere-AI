@@ -17,12 +17,13 @@ import {
   bulkDeletePhotosSchema,
   folderPhotosQuerySchema,
   movePhotoSchema,
+  photoRestoreSchema,
 } from "../lib/validation";
 import { requireAuth } from "../middleware/requireAuth";
 import { reclassifyRateLimiter } from "../middleware/reclassifyRateLimiter";
 import { uploadRateLimiter } from "../middleware/uploadRateLimiter";
 import { PHOTO_CARD_SELECT, toPhotoCard } from "../lib/photoCard";
-import { computePurgeAt, restoreFolderInternal } from "./folders";
+import { computePurgeAt, findLiveFolderByName, generateNonCollidingRecoveredName } from "./folders";
 
 const router = Router();
 
@@ -669,19 +670,44 @@ router.post(
   }),
 );
 
-// POST /api/photos/:id/restore — specs/trash-system.md FINAL DECISION 5.
-// 404 if not owned or not currently trashed. If the photo's FOLDER is ALSO
-// trashed, first attempt to restore the folder (recursing into
-// restoreFolderInternal's collision handling, imported from routes/folders.ts
-// to avoid duplicating the merge/rename logic). If that hits an unresolved
-// collision, return the SAME 409 conflict shape from THIS call, and do NOT
-// restore the photo yet. Otherwise clear the photo's own deletedAt and
-// guarded-increment its folder's photoCount, all inside one
-// serializableTransaction() for consistency with every other counter touch.
+// POST /api/photos/:id/restore — specs/trash-system.md FINAL DECISION 5,
+// REVISED 2026-07-09 (supersedes the original auto-restore-the-folder
+// cascade — Abhishek found in live testing that restoring one photo brought
+// back the ENTIRE trashed folder and every other photo in it, which was
+// confusing). NEW BEHAVIOR: the trashed folder the photo used to belong to is
+// NEVER touched by this endpoint — no restoring it, no touching its
+// deletedAt/photoCount/other photos. Only the requested photo comes back, and
+// it always lands in a LIVE folder (existing or freshly created):
+//   1. 404 if not owned or not currently trashed (unchanged).
+//   2. folderId null (was Unfiled) -> restore directly (unchanged).
+//   3. folder is LIVE -> restore directly into it, guarded-increment
+//      photoCount inside serializableTransaction() (unchanged, already correct).
+//   4. folder is TRASHED -> look for a LIVE folder in the same collection
+//      with the trashed folder's name:
+//        - found, no onConflict -> 409 conflict (photo NOT restored yet).
+//        - found, onConflict "existing" -> restore into conflictingFolderId,
+//          guarded-increment its photoCount.
+//        - found, onConflict "new" -> create a BRAND NEW folder (newName or
+//          auto-generated "<name> (recovered)", bumping a numeric suffix on
+//          further collision, capped retry), restore into it (photoCount=1).
+//        - not found at all -> skip the conflict step, auto-create a new
+//          folder with the ORIGINAL name and restore into it.
+//      The original trashed folder's deletedAt/photoCount/other photos are
+//      untouched in every branch.
 router.post(
   "/:id/restore",
   requireAuth,
   asyncHandler(async (req, res) => {
+    let input;
+    try {
+      input = photoRestoreSchema.parse(req.body);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: err.flatten() });
+      }
+      throw err;
+    }
+
     const photo = await prisma.photo.findUnique({
       where: { id: req.params.id },
       include: { folder: true },
@@ -690,75 +716,138 @@ router.post(
       return res.status(404).json({ error: "Photo not found" });
     }
 
-    if (photo.folder?.deletedAt != null) {
-      // The photo's folder is ALSO trashed — restore it first (auto-cascade).
-      const folderResult = await restoreFolderInternal(photo.folder.id, undefined);
-      if (folderResult.kind === "conflict") {
-        // Do NOT restore the photo yet — surface the SAME conflict shape
-        // from this call; the frontend resolves the folder's conflict via
-        // POST /api/folders/:id/restore, then retries this photo restore.
-        return res.status(409).json({
-          error: "conflict",
-          conflictingFolderId: folderResult.conflictingFolderId,
-          conflictingFolderName: folderResult.conflictingFolderName,
-        });
-      }
-      // Folder restored cleanly (or was merged away) — proceed to also
-      // restore the photo below. Re-read the photo's folderId: a "merge"
-      // outcome may have reparented the photo's folder to the live target.
+    // Case 2: photo was Unfiled when trashed — simple direct restore, no
+    // folder or photoCount involved at all.
+    if (photo.folderId == null) {
+      return restorePhotoInto(req, res, photo.id, null);
     }
 
-    const current = await prisma.photo.findUnique({ where: { id: photo.id } });
-    if (!current || current.deletedAt == null) {
-      // Raced away (already restored by a concurrent request, or the folder
-      // merge cascade already moved+left this photo pointing somewhere live).
-      return res.status(404).json({ error: "Photo not found" });
+    // Case 3: photo's folder is LIVE — restore directly into it (unchanged,
+    // already-correct behavior).
+    if (photo.folder && photo.folder.deletedAt == null) {
+      return restorePhotoInto(req, res, photo.id, photo.folder.id);
     }
 
-    const restored = await serializableTransaction(async (tx) => {
-      const claimed = await tx.photo.updateMany({
-        where: { id: current.id, deletedAt: { not: null } },
-        data: { deletedAt: null },
+    // Case 4: photo's folder is TRASHED — the fix. `trashedFolder` is read
+    // ONLY for its name/collectionId; it is never written to below, and none
+    // of its other photos are touched.
+    const trashedFolder = photo.folder!;
+    const conflict = await findLiveFolderByName(trashedFolder.collectionId, trashedFolder.name);
+
+    if (conflict && !input?.onConflict) {
+      // A live same-named folder exists and the caller hasn't said what to
+      // do — do NOT restore yet, let the frontend offer the choice.
+      return res.status(409).json({
+        error: "conflict",
+        conflictingFolderId: conflict.id,
+        conflictingFolderName: conflict.name,
       });
-      if (claimed.count !== 1) {
-        return null;
-      }
-      if (current.folderId) {
-        await tx.folder.update({
-          where: { id: current.folderId },
-          data: { photoCount: { increment: 1 } },
-        });
-      }
-      return true;
-    });
-
-    if (!restored) {
-      return res.status(404).json({ error: "Photo not found" });
     }
 
-    logAudit({
-      actorType: "owner",
-      actorId: req.user!.id,
-      ownerId: req.user!.id,
-      action: "photo_restored",
-      resourceType: "photo",
-      resourceId: current.id,
-      metadata: { folderId: current.folderId },
-    });
+    if (conflict && input?.onConflict === "existing") {
+      return restorePhotoInto(req, res, photo.id, conflict.id, {
+        movedFromTrashedFolderId: trashedFolder.id,
+      });
+    }
 
-    const final = await prisma.photo.findUnique({
-      where: { id: current.id },
-      include: { folder: { select: { id: true, name: true } } },
-    });
+    // Reaching here means either: (a) conflict + onConflict === "new", or
+    // (b) no live same-named folder exists at all — both create a brand-new
+    // folder (never the trashed one) and restore the photo into it. Case (b)
+    // reuses the original name (nothing to collide with); case (a) uses the
+    // caller's newName or an auto-generated "<name> (recovered)" variant.
+    const desiredName =
+      conflict && input?.onConflict === "new"
+        ? input.newName ??
+          (await generateNonCollidingRecoveredName(trashedFolder.collectionId, trashedFolder.name))
+        : trashedFolder.name;
 
-    return res.status(200).json({
-      restored: true,
-      id: final!.id,
-      folderId: final!.folderId,
-      folder: final!.folder ? { id: final!.folder.id, name: final!.folder.name } : null,
+    const newFolder = await createFolderTolerantly(trashedFolder.collectionId, desiredName);
+    return restorePhotoInto(req, res, photo.id, newFolder.id, {
+      movedFromTrashedFolderId: trashedFolder.id,
     });
   }),
 );
+
+// Creates a new LIVE, empty ("custom") folder for the photo-restore
+// new-folder paths. Attempts `name` as-is first (cheap common case — either
+// it's the original folder's name with nothing live colliding, or an
+// already-Zod-validated caller-supplied/auto-generated name). On a rare P2002
+// race (something else created a live folder with this exact name between
+// our earlier check and this create), fall back to the numeric-suffix
+// auto-naming logic (generateNonCollidingRecoveredName, capped at 20
+// attempts) rather than failing the whole restore.
+async function createFolderTolerantly(collectionId: string, name: string) {
+  try {
+    return await prisma.folder.create({
+      data: { collectionId, name, categoryType: "custom", photoCount: 0 },
+      select: { id: true, name: true },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      const fallbackName = await generateNonCollidingRecoveredName(collectionId, name);
+      return prisma.folder.create({
+        data: { collectionId, name: fallbackName, categoryType: "custom", photoCount: 0 },
+        select: { id: true, name: true },
+      });
+    }
+    throw err;
+  }
+}
+
+// Clears the photo's own deletedAt and, if landing in a folder, guarded-
+// increments that folder's photoCount — all inside one
+// serializableTransaction() for consistency with every other counter touch in
+// this codebase. `targetFolderId` is the folder the photo will live in after
+// restore (may differ from its original folderId — see `extra`). Writes the
+// photo_restored audit row and returns the standard restore response shape.
+async function restorePhotoInto(
+  req: import("express").Request,
+  res: import("express").Response,
+  photoId: string,
+  targetFolderId: string | null,
+  extra?: { movedFromTrashedFolderId: string },
+) {
+  const restored = await serializableTransaction(async (tx) => {
+    const claimed = await tx.photo.updateMany({
+      where: { id: photoId, deletedAt: { not: null } },
+      data: { deletedAt: null, folderId: targetFolderId },
+    });
+    if (claimed.count !== 1) return null;
+    if (targetFolderId) {
+      await tx.folder.update({
+        where: { id: targetFolderId },
+        data: { photoCount: { increment: 1 } },
+      });
+    }
+    return true;
+  });
+
+  if (!restored) {
+    return res.status(404).json({ error: "Photo not found" });
+  }
+
+  logAudit({
+    actorType: "owner",
+    actorId: req.user!.id,
+    ownerId: req.user!.id,
+    action: "photo_restored",
+    resourceType: "photo",
+    resourceId: photoId,
+    metadata: extra ?? {},
+  });
+
+  const final = await prisma.photo.findUnique({
+    where: { id: photoId },
+    include: { folder: { select: { id: true, name: true } } },
+  });
+
+  return res.status(200).json({
+    restored: true,
+    id: final!.id,
+    folderId: final!.folderId,
+    folder: final!.folder ? { id: final!.folder.id, name: final!.folder.name } : null,
+  });
+}
 
 export default router;
 export { THUMBNAIL_SIZES, MAX_UPLOAD_BYTES };

@@ -433,46 +433,195 @@ describe("POST /api/photos/:id/restore", () => {
     expect(again.status).toBe(404); // not trashed anymore
   });
 
-  it("auto-cascades restoring the photo's ALSO-trashed folder first (clean case, no collision)", async () => {
+  // specs/trash-system.md FINAL DECISION 5, REVISED 2026-07-09: the
+  // trashed folder must NEVER be touched by a single-photo restore — the
+  // old "auto-restore the folder first" cascade is gone. These tests
+  // replace the removed "auto-cascades restoring the photo's ALSO-trashed
+  // folder first" / "SAME 409 conflict shape as folder-restore" pair above.
+
+  it("REVISED: folder trashed, no live same-named folder exists → auto-creates a new folder with the original name, photo lands there, original trashed folder completely untouched", async () => {
     if (skipInfra()) return;
-    const f = await seedFolder({ collectionId, ownerId, name: `cascade-clean-${stamp}`, photos: 1 });
+    const f = await seedFolder({
+      collectionId,
+      ownerId,
+      name: `revised-autocreate-${stamp}`,
+      photos: 2,
+    });
     const photoId = f.photoIds[0];
-    // Trash the photo, THEN trash the folder (photo keeps its own deletedAt).
+    const otherPhotoId = f.photoIds[1];
     await request(app).delete(`/api/photos/${photoId}`).set("Cookie", ownerCookie);
     await request(app).delete(`/api/folders/${f.id}`).set("Cookie", ownerCookie);
 
     const res = await request(app).post(`/api/photos/${photoId}/restore`).set("Cookie", ownerCookie);
     expect(res.status).toBe(200);
+    expect(res.body.restored).toBe(true);
+    expect(res.body.folderId).not.toBe(f.id);
+    expect(res.body.folder?.name).toBe(`revised-autocreate-${stamp}`);
 
-    const folderRow = await prisma.folder.findUnique({ where: { id: f.id } });
-    expect(folderRow?.deletedAt).toBeNull(); // folder auto-restored too
     const photoRow = await prisma.photo.findUnique({ where: { id: photoId } });
     expect(photoRow?.deletedAt).toBeNull();
+    expect(photoRow?.folderId).toBe(res.body.folderId);
+
+    const newFolderRow = await prisma.folder.findUnique({ where: { id: res.body.folderId } });
+    expect(newFolderRow?.id).not.toBe(f.id);
+    expect(newFolderRow?.deletedAt).toBeNull();
+    expect(newFolderRow?.photoCount).toBe(1);
+
+    // Original trashed folder untouched by THIS restore call: still trashed,
+    // its count reflects only the earlier single-photo soft-delete (which
+    // already decremented it per PD4, unrelated to this fix) and is not
+    // further changed by the photo-restore; its other (transitively-hidden)
+    // photo is still under it.
+    const originalFolderRow = await prisma.folder.findUnique({ where: { id: f.id } });
+    expect(originalFolderRow?.deletedAt).not.toBeNull();
+    expect(originalFolderRow?.photoCount).toBe(1); // decremented by the earlier DELETE, not by restore
+    const otherPhotoRow = await prisma.photo.findUnique({ where: { id: otherPhotoId } });
+    expect(otherPhotoRow?.folderId).toBe(f.id);
+    expect(otherPhotoRow?.deletedAt).toBeNull(); // never individually trashed
   });
 
-  it("returns the SAME 409 conflict shape as folder-restore when the auto-cascade hits a collision, and does NOT restore the photo", async () => {
+  it("REVISED: folder trashed, a live same-named folder exists, no onConflict → 409 conflict shape, photo still trashed, original folder untouched", async () => {
     if (skipInfra()) return;
-    const f = await seedFolder({ collectionId, ownerId, name: `cascade-conflict-${stamp}`, photos: 1 });
+    const f = await seedFolder({
+      collectionId,
+      ownerId,
+      name: `revised-conflict-${stamp}`,
+      photos: 1,
+    });
     const photoId = f.photoIds[0];
     await request(app).delete(`/api/photos/${photoId}`).set("Cookie", ownerCookie);
     await request(app).delete(`/api/folders/${f.id}`).set("Cookie", ownerCookie);
     // A NEW live folder with the SAME name (only possible thanks to T7's
     // partial unique index — a trashed folder no longer occupies the slot).
-    const conflictFolder = await prisma.folder.create({
-      data: { collectionId, name: `cascade-conflict-${stamp}`, categoryType: "custom" },
+    const liveFolder = await prisma.folder.create({
+      data: { collectionId, name: `revised-conflict-${stamp}`, categoryType: "custom" },
     });
 
     const res = await request(app).post(`/api/photos/${photoId}/restore`).set("Cookie", ownerCookie);
     expect(res.status).toBe(409);
     expect(res.body.error).toBe("conflict");
-    expect(res.body.conflictingFolderId).toBe(conflictFolder.id);
-    expect(res.body.conflictingFolderName).toBe(`cascade-conflict-${stamp}`);
+    expect(res.body.conflictingFolderId).toBe(liveFolder.id);
+    expect(res.body.conflictingFolderName).toBe(`revised-conflict-${stamp}`);
 
-    // Neither the folder nor the photo was restored.
-    const folderRow = await prisma.folder.findUnique({ where: { id: f.id } });
-    expect(folderRow?.deletedAt).not.toBeNull();
     const photoRow = await prisma.photo.findUnique({ where: { id: photoId } });
     expect(photoRow?.deletedAt).not.toBeNull();
+    const originalFolderRow = await prisma.folder.findUnique({ where: { id: f.id } });
+    expect(originalFolderRow?.deletedAt).not.toBeNull(); // untouched, not restored
+  });
+
+  it("REVISED: same conflict scenario + onConflict=existing → photo lands in the existing live folder, its count increments by 1, original trashed folder untouched", async () => {
+    if (skipInfra()) return;
+    const f = await seedFolder({
+      collectionId,
+      ownerId,
+      name: `revised-existing-${stamp}`,
+      photos: 1,
+    });
+    const photoId = f.photoIds[0];
+    await request(app).delete(`/api/photos/${photoId}`).set("Cookie", ownerCookie);
+    await request(app).delete(`/api/folders/${f.id}`).set("Cookie", ownerCookie);
+    const liveFolder = await prisma.folder.create({
+      data: { collectionId, name: `revised-existing-${stamp}`, categoryType: "custom", photoCount: 3 },
+    });
+
+    const res = await request(app)
+      .post(`/api/photos/${photoId}/restore`)
+      .set("Cookie", ownerCookie)
+      .send({ onConflict: "existing" });
+    expect(res.status).toBe(200);
+    expect(res.body.folderId).toBe(liveFolder.id);
+
+    const photoRow = await prisma.photo.findUnique({ where: { id: photoId } });
+    expect(photoRow?.deletedAt).toBeNull();
+    expect(photoRow?.folderId).toBe(liveFolder.id);
+
+    const liveFolderRow = await prisma.folder.findUnique({ where: { id: liveFolder.id } });
+    expect(liveFolderRow?.photoCount).toBe(4); // incremented by 1
+
+    const originalFolderRow = await prisma.folder.findUnique({ where: { id: f.id } });
+    expect(originalFolderRow?.deletedAt).not.toBeNull(); // still trashed, untouched by this restore
+    expect(originalFolderRow?.photoCount).toBe(0); // decremented by the earlier DELETE, not by restore
+  });
+
+  it("REVISED: same conflict scenario + onConflict=new (no newName) → a genuinely NEW folder (distinct from both original and existing) with an auto-generated non-colliding name, photo lands there", async () => {
+    if (skipInfra()) return;
+    const f = await seedFolder({
+      collectionId,
+      ownerId,
+      name: `revised-newfolder-${stamp}`,
+      photos: 1,
+    });
+    const photoId = f.photoIds[0];
+    await request(app).delete(`/api/photos/${photoId}`).set("Cookie", ownerCookie);
+    await request(app).delete(`/api/folders/${f.id}`).set("Cookie", ownerCookie);
+    const liveFolder = await prisma.folder.create({
+      data: { collectionId, name: `revised-newfolder-${stamp}`, categoryType: "custom" },
+    });
+
+    const res = await request(app)
+      .post(`/api/photos/${photoId}/restore`)
+      .set("Cookie", ownerCookie)
+      .send({ onConflict: "new" });
+    expect(res.status).toBe(200);
+    expect(res.body.folder?.name).toBe(`revised-newfolder-${stamp} (recovered)`);
+    expect(res.body.folderId).not.toBe(f.id);
+    expect(res.body.folderId).not.toBe(liveFolder.id);
+
+    const newFolderRow = await prisma.folder.findUnique({ where: { id: res.body.folderId } });
+    expect(newFolderRow?.deletedAt).toBeNull();
+    expect(newFolderRow?.photoCount).toBe(1);
+
+    const originalFolderRow = await prisma.folder.findUnique({ where: { id: f.id } });
+    expect(originalFolderRow?.deletedAt).not.toBeNull(); // untouched
+    const liveFolderRow = await prisma.folder.findUnique({ where: { id: liveFolder.id } });
+    expect(liveFolderRow?.photoCount).toBe(0); // untouched
+  });
+
+  it("REVISED: the original trashed folder can STILL be restored normally afterward via POST /api/folders/:id/restore, bringing back whatever's still under it", async () => {
+    if (skipInfra()) return;
+    const f = await seedFolder({
+      collectionId,
+      ownerId,
+      name: `revised-still-restorable-${stamp}`,
+      photos: 2,
+    });
+    const photoId = f.photoIds[0];
+    const remainingPhotoId = f.photoIds[1];
+    await request(app).delete(`/api/photos/${photoId}`).set("Cookie", ownerCookie);
+    await request(app).delete(`/api/folders/${f.id}`).set("Cookie", ownerCookie);
+
+    // Restoring the one trashed photo does NOT touch the trashed folder. No
+    // live same-named folder exists yet, so this auto-creates a brand-new
+    // LIVE folder reusing the ORIGINAL name (per spec) — which means the
+    // trashed folder's OWN restore path will now legitimately collide with
+    // it (T7 partial-unique-index behavior, unrelated to this fix): that
+    // collision is resolved here via onConflict=rename on the unrelated
+    // folder-restore endpoint, proving the two code paths don't interfere.
+    const restorePhoto = await request(app)
+      .post(`/api/photos/${photoId}/restore`)
+      .set("Cookie", ownerCookie);
+    expect(restorePhoto.status).toBe(200);
+
+    const conflictAttempt = await request(app)
+      .post(`/api/folders/${f.id}/restore`)
+      .set("Cookie", ownerCookie);
+    expect(conflictAttempt.status).toBe(409); // expected: the auto-created folder above now occupies the name
+
+    const restoreFolder = await request(app)
+      .post(`/api/folders/${f.id}/restore`)
+      .set("Cookie", ownerCookie)
+      .send({ onConflict: "rename", newName: `revised-still-restorable-${stamp}-renamed` });
+    expect(restoreFolder.status).toBe(200);
+    expect(restoreFolder.body.restored).toBe(true);
+
+    const folderRow = await prisma.folder.findUnique({ where: { id: f.id } });
+    expect(folderRow?.deletedAt).toBeNull();
+    const remainingPhotoRow = await prisma.photo.findUnique({ where: { id: remainingPhotoId } });
+    expect(remainingPhotoRow?.folderId).toBe(f.id);
+    const detail = await request(app)
+      .get(`/api/photos/${remainingPhotoId}`)
+      .set("Cookie", ownerCookie);
+    expect(detail.status).toBe(200); // visible again now that the folder is live
   });
 });
 
