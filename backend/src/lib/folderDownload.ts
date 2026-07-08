@@ -73,3 +73,48 @@ export async function preflightFolderDownload(folderId: string): Promise<Downloa
   }
   return { ok: true, photos };
 }
+
+/**
+ * Same Z4 inclusion rule as queryDownloadablePhotos, but scoped to an
+ * explicit, owner-verified id set (organize multi-select "Download
+ * selected") rather than a whole folder. An id that doesn't belong to
+ * `ownerId`, is trashed, or isn't a stored `done` original is silently
+ * excluded rather than erroring the whole batch — same "quietly skip what
+ * doesn't apply" spirit as bulk-delete/bulk-move's per-id partial success.
+ */
+export async function queryDownloadablePhotosByIds(
+  photoIds: string[],
+  ownerId: string,
+): Promise<ZipPhoto[]> {
+  const photos = await prisma.photo.findMany({
+    where: {
+      id: { in: photoIds },
+      ownerId,
+      aiClassificationStatus: "done",
+      s3Key: { not: "" },
+      deletedAt: null,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { s3Key: true, originalFilename: true },
+  });
+  return photos;
+}
+
+/** Same Z6/Z3 pre-flight as preflightFolderDownload, for an explicit id set. */
+export async function preflightDownloadByIds(
+  photoIds: string[],
+  ownerId: string,
+): Promise<DownloadPreflight> {
+  const photos = await queryDownloadablePhotosByIds(photoIds, ownerId);
+  if (photos.length === 0) {
+    return { ok: false, status: 400, error: "None of the selected photos can be downloaded" };
+  }
+  if (photos.length > DOWNLOAD_ALL_MAX_PHOTOS) {
+    return {
+      ok: false,
+      status: 409,
+      error: "Too many photos selected to download as a single zip — narrow it down",
+    };
+  }
+  return { ok: true, photos };
+}

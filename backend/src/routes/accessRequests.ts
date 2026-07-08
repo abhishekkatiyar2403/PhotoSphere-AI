@@ -53,20 +53,38 @@ router.get(
         ...(query.status === "all" ? {} : { status: query.status }),
       },
       orderBy: { createdAt: "desc" },
-      include: { guestUser: { select: { id: true, email: true, name: true } } },
+      include: {
+        guestUser: { select: { id: true, email: true, name: true } },
+        // Link-forwarding detection: every click recorded while this
+        // request was pending (see POST /api/invites/:token/request).
+        touches: { select: { ipAddress: true }, orderBy: { createdAt: "asc" } },
+      },
     });
 
     return res.status(200).json({
-      requests: requests.map((r) => ({
-        id: r.id,
-        status: r.status,
-        guest: { id: r.guestUser.id, email: r.guestUser.email, name: r.guestUser.name },
-        ipAddress: r.ipAddress,
-        deviceInfo: r.deviceInfo,
-        createdAt: r.createdAt,
-        resolvedAt: r.resolvedAt,
-        // Never expose otpHash / session-claim internals.
-      })),
+      requests: requests.map((r) => {
+        // Distinct IPs that touched this request — >1 means the invite link
+        // was opened from more than one place before it was resolved, which
+        // is exactly what link-forwarding looks like (the guest sharing the
+        // link with someone else, or the same person switching networks —
+        // this can't tell those apart, it's a signal to review, not proof).
+        // A null IP (e.g. local dev) counts as its own bucket so it doesn't
+        // silently collapse into a false "only one device" read.
+        const distinctIps = new Set(r.touches.map((t) => t.ipAddress ?? "unknown"));
+        return {
+          id: r.id,
+          status: r.status,
+          guest: { id: r.guestUser.id, email: r.guestUser.email, name: r.guestUser.name },
+          ipAddress: r.ipAddress,
+          deviceInfo: r.deviceInfo,
+          createdAt: r.createdAt,
+          resolvedAt: r.resolvedAt,
+          touchCount: r.touches.length,
+          distinctDeviceCount: distinctIps.size,
+          multipleDevicesDetected: distinctIps.size > 1,
+          // Never expose otpHash / session-claim internals.
+        };
+      }),
     });
   }),
 );

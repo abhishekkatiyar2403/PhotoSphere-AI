@@ -149,6 +149,18 @@ export default function OrganizePage() {
   );
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
 
+  // ---- Bulk move (multi-select "Move to…") and bulk download ("Download
+  // selected") — added alongside bulk-delete once multiple photos could be
+  // selected at once; same partial-success handling as bulk-delete. ----
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
+  const [bulkMoveBusy, setBulkMoveBusy] = useState(false);
+  const [bulkMoveResult, setBulkMoveResult] = useState<{ movedCount: number; failedCount: number; folderName: string } | null>(
+    null,
+  );
+  const [bulkMoveError, setBulkMoveError] = useState<string | null>(null);
+  const [bulkDownloadBusy, setBulkDownloadBusy] = useState(false);
+  const [bulkDownloadError, setBulkDownloadError] = useState<string | null>(null);
+
   const [selectingAllAcrossPages, setSelectingAllAcrossPages] = useState(false);
 
   // ---- Single-photo delete (a per-card delete action, separate from
@@ -945,6 +957,108 @@ export default function OrganizePage() {
     }
   }
 
+  // ---- Bulk move (multi-select "Move to…") — same partial-success handling
+  // and local-reconciliation pattern as confirmBulkDelete/handleMove. ----
+  function openBulkMove() {
+    setBulkMoveResult(null);
+    setBulkMoveError(null);
+    setBulkMoveOpen(true);
+  }
+
+  function closeBulkMove() {
+    if (bulkMoveBusy) return;
+    setBulkMoveOpen(false);
+    setBulkMoveResult(null);
+    setBulkMoveError(null);
+  }
+
+  async function confirmBulkMove(targetFolderId: string) {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0 || !targetFolderId) return;
+    const sourceFolderId = selectedFolderId;
+    const sourceWasUnfiled = sourceFolderId === UNFILED_FOLDER_ID;
+    setBulkMoveBusy(true);
+    setBulkMoveError(null);
+    try {
+      const res = await photosApi.bulkMove(ids, targetFolderId);
+      setBulkMoveResult({ movedCount: res.moved.length, failedCount: res.failed.length, folderName: res.folderName });
+      if (res.moved.length > 0) {
+        const movedSet = new Set(res.moved);
+        res.moved.forEach((id) => stopPoll(id));
+        setPhotos((prev) => prev.filter((p) => !movedSet.has(p.id)));
+        setTotal((prev) => Math.max(0, prev - res.moved.length));
+        if (sourceWasUnfiled) {
+          setUnfiledCount((prev) => Math.max(0, prev - res.moved.length));
+        } else if (sourceFolderId) {
+          setFolders((prev) =>
+            prev.map((f) =>
+              f.id === sourceFolderId ? { ...f, photoCount: Math.max(0, f.photoCount - res.moved.length) } : f,
+            ),
+          );
+        }
+        setFolders((prev) =>
+          prev.map((f) => (f.id === targetFolderId ? { ...f, photoCount: f.photoCount + res.moved.length } : f)),
+        );
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          res.moved.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      setBulkMoveError(err instanceof Error ? err.message : "Move failed");
+    } finally {
+      setBulkMoveBusy(false);
+    }
+  }
+
+  // ---- Bulk download ("Download selected") — zips the current selection via
+  // POST /api/photos/download-many; the browser handles the actual save once
+  // photosApi.downloadMany triggers it. ----
+  async function handleBulkDownload() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setBulkDownloadBusy(true);
+    setBulkDownloadError(null);
+    try {
+      await photosApi.downloadMany(ids);
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      setBulkDownloadError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setBulkDownloadBusy(false);
+    }
+  }
+
+  // ---- Single-photo download (per-card action) — same presigned-URL +
+  // window.open pattern already used by the guest download view
+  // (src/app/g/[token]/page.tsx). ----
+  async function handleDownloadPhoto(photo: CardState) {
+    try {
+      const detail = await photosApi.get(photo.id);
+      window.open(detail.download.url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      setPhotos((prev) =>
+        prev.map((p) =>
+          p.id === photo.id
+            ? { ...p, actionError: err instanceof Error ? err.message : "Download failed" }
+            : p,
+        ),
+      );
+    }
+  }
+
   // ---- Single-photo delete (per-card action, e.g. via a Delete button on
   // the card) - same reversible "moved to Trash" copy as bulk delete. The T2
   // 409 (the photo's folder is live-shared) is surfaced with a specific
@@ -1295,6 +1409,7 @@ export default function OrganizePage() {
                         onOpenViewer={() => setViewerIndex(i)}
                         onSelectClick={(e) => handleCardSelectClick(photo.id, e)}
                         onDeletePhoto={handleDeletePhoto}
+                        onDownload={handleDownloadPhoto}
                       />
                     ))}
                     {marquee && (
@@ -1356,7 +1471,6 @@ export default function OrganizePage() {
                 <p>
                   “{mergeDialogFolder.name}” is currently shared with a guest. Revoke the share first, then merge.
                 </p>
-                <p className="organize-shared-block-sub">Server returned 409. Nothing was moved or deleted.</p>
                 <div className="organize-modal-actions">
                   <Link href="/guests" className="organize-shared-block-link" data-testid="merge-goto-guests">
                     Go to Guests →
@@ -1446,7 +1560,6 @@ export default function OrganizePage() {
                 <p>
                   “{deleteDialogFolder.name}” is currently shared with a guest. Revoke the share first, then delete.
                 </p>
-                <p className="organize-shared-block-sub">Server returned 409. Nothing was moved or deleted.</p>
                 <div className="organize-modal-actions">
                   <Link href="/guests" className="organize-shared-block-link" data-testid="delete-goto-guests">
                     Go to Guests →
@@ -1507,6 +1620,23 @@ export default function OrganizePage() {
           <span className="organize-selectbar-count">{selectedIds.size} selected</span>
           <button
             type="button"
+            className="organize-selectbar-move"
+            data-testid="organize-selectbar-move"
+            onClick={openBulkMove}
+          >
+            Move to…
+          </button>
+          <button
+            type="button"
+            className="organize-selectbar-download"
+            data-testid="organize-selectbar-download"
+            disabled={bulkDownloadBusy}
+            onClick={handleBulkDownload}
+          >
+            {bulkDownloadBusy ? "Preparing…" : "Download selected"}
+          </button>
+          <button
+            type="button"
             className="organize-selectbar-delete"
             data-testid="organize-selectbar-delete"
             onClick={openBulkDeleteConfirm}
@@ -1521,6 +1651,72 @@ export default function OrganizePage() {
           >
             Cancel
           </button>
+        </div>
+      )}
+      {bulkDownloadError && <p className="organize-new-folder-error trash-row-error">{bulkDownloadError}</p>}
+
+      {/* Bulk move — same folder list as the per-card "Move to…" select, only
+          shown when >=1 photo is selected. Reversible, no danger styling. */}
+      {bulkMoveOpen && (
+        <div
+          className="organize-modal-backdrop"
+          data-testid="bulk-move-dialog"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeBulkMove();
+          }}
+        >
+          <div className="organize-modal">
+            {bulkMoveResult ? (
+              <>
+                <h3>Moved</h3>
+                <p className="organize-modal-sub" data-testid="bulk-move-result">
+                  {bulkMoveResult.failedCount === 0
+                    ? `${bulkMoveResult.movedCount} photo${bulkMoveResult.movedCount === 1 ? "" : "s"} moved to "${bulkMoveResult.folderName}".`
+                    : `${bulkMoveResult.movedCount} moved, ${bulkMoveResult.failedCount} could not be moved.`}
+                </p>
+                <div className="organize-modal-actions">
+                  <button type="button" className="organize-modal-cancel" onClick={closeBulkMove}>
+                    Done
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>Move {selectedIds.size} photo{selectedIds.size === 1 ? "" : "s"} to…</h3>
+                {bulkMoveError && <p className="organize-new-folder-error">{bulkMoveError}</p>}
+                <select
+                  data-testid="bulk-move-select"
+                  defaultValue=""
+                  disabled={bulkMoveBusy}
+                  onChange={(e) => {
+                    const target = e.target.value;
+                    if (target) confirmBulkMove(target);
+                  }}
+                >
+                  <option value="" disabled>
+                    {bulkMoveBusy ? "Moving…" : "Choose a folder ▾"}
+                  </option>
+                  {folders
+                    .filter((f) => f.id !== selectedFolderId)
+                    .map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}
+                      </option>
+                    ))}
+                </select>
+                <div className="organize-modal-actions">
+                  <button
+                    type="button"
+                    className="organize-modal-cancel"
+                    disabled={bulkMoveBusy}
+                    onClick={closeBulkMove}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -1598,7 +1794,6 @@ export default function OrganizePage() {
               <div className="organize-shared-block" data-testid="delete-photo-shared-block">
                 <h3>Can&apos;t delete this photo</h3>
                 <p>Its folder is shared with a guest. Revoke the share first, then delete.</p>
-                <p className="organize-shared-block-sub">Server returned 409. Nothing was deleted.</p>
                 <div className="organize-modal-actions">
                   <Link href="/guests" className="organize-shared-block-link">
                     Go to Guests →
@@ -1652,6 +1847,7 @@ function PhotoCard({
   onOpenViewer,
   onSelectClick,
   onDeletePhoto,
+  onDownload,
 }: {
   photo: CardState;
   folders: Folder[];
@@ -1662,6 +1858,7 @@ function PhotoCard({
   onOpenViewer: () => void;
   onSelectClick: (e: React.MouseEvent) => void;
   onDeletePhoto: (photo: CardState) => void;
+  onDownload: (photo: CardState) => void;
 }) {
   const moveTargets = folders.filter((f) => f.id !== currentFolderId);
   const cardClass =
@@ -1765,6 +1962,14 @@ function PhotoCard({
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          className="organize-card-download"
+          data-testid={`download-photo-${photo.id}`}
+          onClick={() => onDownload(photo)}
+        >
+          Download
+        </button>
         <button
           type="button"
           className="organize-card-delete"

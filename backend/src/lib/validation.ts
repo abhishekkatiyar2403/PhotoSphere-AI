@@ -66,6 +66,28 @@ export const bulkDeletePhotosSchema = z.object({
     .max(100, "photoIds must not exceed 100"),
 });
 
+// POST /api/photos/bulk-move — move many selected photos into one target
+// folder at once (organize multi-select "Move to…"). Same shape/cap
+// conventions as bulk-delete: non-empty, max 100, partial-success per-id.
+export const bulkMovePhotosSchema = z.object({
+  photoIds: z
+    .array(z.string().uuid("each photoId must be a UUID"))
+    .min(1, "photoIds must not be empty")
+    .max(100, "photoIds must not exceed 100"),
+  folderId: z.string().uuid("folderId must be a UUID"),
+});
+
+// POST /api/photos/download-many — zip a specific set of selected photos
+// (organize multi-select "Download selected"). Same id-array shape as
+// bulk-delete/bulk-move; the actual downloadable/cap filtering happens
+// server-side (see lib/folderDownload.ts's queryDownloadablePhotosByIds).
+export const downloadManyPhotosSchema = z.object({
+  photoIds: z
+    .array(z.string().uuid("each photoId must be a UUID"))
+    .min(1, "photoIds must not be empty")
+    .max(100, "photoIds must not exceed 100"),
+});
+
 // GET /api/trash — paginated, per-section limit/offset (same convention as
 // folderPhotosQuerySchema/searchQuerySchema — limit > 100 is a 400, not a clamp).
 export const trashListQuerySchema = z.object({
@@ -90,6 +112,8 @@ export const folderRestoreSchema = z
   .optional();
 
 export type BulkDeletePhotosInput = z.infer<typeof bulkDeletePhotosSchema>;
+export type BulkMovePhotosInput = z.infer<typeof bulkMovePhotosSchema>;
+export type DownloadManyPhotosInput = z.infer<typeof downloadManyPhotosSchema>;
 export type TrashListQuery = z.infer<typeof trashListQuerySchema>;
 export type TrashTypeParam = z.infer<typeof trashTypeParamSchema>;
 export type FolderRestoreInput = z.infer<typeof folderRestoreSchema>;
@@ -105,6 +129,12 @@ export const photoRestoreSchema = z
   .object({
     onConflict: z.enum(["existing", "new"]).optional(),
     newName: z.string().trim().min(1, "Folder name is required").max(255, "Folder name too long").optional(),
+    // Used ONLY for the "photo's original folder was permanently purged"
+    // branch's onConflict==="existing" resolution: the caller picks ONE of
+    // the live folders offered back in the 409, by id (not name-matched —
+    // that branch offers every live folder in the collection, not just a
+    // same-name one).
+    targetFolderId: z.string().uuid().optional(),
   })
   .optional();
 
@@ -184,7 +214,26 @@ export const approveAccessRequestSchema = z.object({
   otp: z.string().trim().regex(/^\d{6}$/, "OTP must be a 6-digit code"),
 });
 
+// PATCH /api/guests/:id — owner changes an existing guest's permission level
+// across all of their (non-revoked) folder shares, without having to revoke
+// and re-share from scratch.
+export const updateGuestPermissionSchema = z.object({
+  permissionLevel: z.enum(PERMISSION_LEVELS),
+});
+
+// POST /api/guests/:id/folders — share one or more ADDITIONAL folders with an
+// existing guest, without touching their existing shares. `permissionLevel`
+// is optional — when omitted, the newly-added folders get the guest's
+// current level (their existing shares' level, matching the "one level per
+// guest" model the roster UI already assumes).
+export const addGuestFoldersSchema = z.object({
+  folderIds: z.array(z.string().uuid("folderId must be a UUID")).min(1, "At least one folder is required"),
+  permissionLevel: z.enum(PERMISSION_LEVELS).optional(),
+});
+
 export type CreateGuestInput = z.infer<typeof createGuestSchema>;
+export type AddGuestFoldersInput = z.infer<typeof addGuestFoldersSchema>;
+export type UpdateGuestPermissionInput = z.infer<typeof updateGuestPermissionSchema>;
 export type AccessRequestsQuery = z.infer<typeof accessRequestsQuerySchema>;
 export type ApproveAccessRequestInput = z.infer<typeof approveAccessRequestSchema>;
 
@@ -202,6 +251,9 @@ export const AUDIT_ACTIONS = [
   "access_approved",
   "access_denied",
   "guest_revoked",
+  "guest_permission_changed",
+  "guest_folder_added",
+  "guest_folder_removed",
   "photo_viewed",
   "photo_downloaded",
   "photo_deleted",

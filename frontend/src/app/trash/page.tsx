@@ -18,6 +18,8 @@ import { useRouter } from "next/navigation";
 import {
   ApiError,
   authApi,
+  FolderDeletedBody,
+  isFolderDeletedConflict,
   isRestoreConflict,
   PhotoRestoreOnConflict,
   photosApi,
@@ -62,6 +64,21 @@ type PhotoCollisionState = {
   error: string | null;
 };
 
+// Photo-restore "folder is GONE for good" state — a photo whose original
+// folder was PERMANENTLY purged while the photo was already independently
+// trashed (bug #5/#6). Distinct from PhotoCollisionState above: there's no
+// live same-named folder to offer, the old folder simply doesn't exist
+// anymore, so the choice is "pick any live folder" or "create a new one".
+type FolderGoneState = {
+  originalFolderName: string;
+  liveFolders: { id: string; name: string }[];
+  selectedFolderId: string;
+  customizingNewName: boolean;
+  newNameDraft: string;
+  busy: boolean;
+  error: string | null;
+};
+
 export default function TrashPage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
@@ -87,6 +104,7 @@ export default function TrashPage() {
 
   const [folderCollisions, setFolderCollisions] = useState<Record<string, CollisionState>>({});
   const [photoCollisions, setPhotoCollisions] = useState<Record<string, PhotoCollisionState>>({});
+  const [folderGoneStates, setFolderGoneStates] = useState<Record<string, FolderGoneState>>({});
 
   // Brief, cheap confirmation of which folder a restored photo landed in —
   // auto-clears after a few seconds. Not required by spec, just nice.
@@ -166,6 +184,12 @@ export default function TrashPage() {
         delete next[photo.id];
         return next;
       });
+      setFolderGoneStates((prev) => {
+        if (!(photo.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[photo.id];
+        return next;
+      });
       if (result.folder) {
         setRestoreToast(`Restored "${photo.originalFilename}" to "${result.folder.name}"`);
       }
@@ -181,6 +205,20 @@ export default function TrashPage() {
           [photo.id]: {
             conflictingFolderId: body.conflictingFolderId,
             conflictingFolderName: body.conflictingFolderName,
+            customizingNewName: false,
+            newNameDraft: "",
+            busy: false,
+            error: null,
+          },
+        }));
+      } else if (isFolderDeletedConflict(err)) {
+        const body = err.body as FolderDeletedBody;
+        setFolderGoneStates((prev) => ({
+          ...prev,
+          [photo.id]: {
+            originalFolderName: body.originalFolderName,
+            liveFolders: body.liveFolders,
+            selectedFolderId: body.liveFolders[0]?.id ?? "",
             customizingNewName: false,
             newNameDraft: "",
             busy: false,
@@ -223,6 +261,45 @@ export default function TrashPage() {
         return;
       }
       setPhotoCollisions((prev) => ({
+        ...prev,
+        [photo.id]: {
+          ...prev[photo.id],
+          busy: false,
+          error: err instanceof Error ? err.message : "Restore failed",
+        },
+      }));
+    }
+  }
+
+  // ---- Resolve the "original folder is gone for good" state: either drop
+  // the photo into a chosen live folder, or create a brand-new one. ----
+  async function resolveFolderGone(photo: TrashPhotoItem, onConflict: PhotoRestoreOnConflict, newName?: string) {
+    const state = folderGoneStates[photo.id];
+    if (!state) return;
+    if (onConflict === "existing" && !state.selectedFolderId) return;
+    setFolderGoneStates((prev) => ({ ...prev, [photo.id]: { ...state, busy: true, error: null } }));
+    try {
+      const result = await photosApi.restore(photo.id, {
+        onConflict,
+        newName,
+        targetFolderId: onConflict === "existing" ? state.selectedFolderId : undefined,
+      });
+      setPhotos((prev) => prev.filter((p) => p.id !== photo.id));
+      setPhotoTotal((prev) => Math.max(0, prev - 1));
+      setFolderGoneStates((prev) => {
+        const next = { ...prev };
+        delete next[photo.id];
+        return next;
+      });
+      if (result.folder) {
+        setRestoreToast(`Restored "${photo.originalFilename}" to "${result.folder.name}"`);
+      }
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      setFolderGoneStates((prev) => ({
         ...prev,
         [photo.id]: {
           ...prev[photo.id],
@@ -431,6 +508,7 @@ export default function TrashPage() {
           <ul className="trash-list" data-testid="trash-photo-list">
             {photos.map((photo) => {
               const collision = photoCollisions[photo.id];
+              const gone = folderGoneStates[photo.id];
               const urgent = photo.daysRemaining <= URGENT_DAYS;
               return (
                 <li key={photo.id} className={`trash-row${urgent ? " urgent" : ""}`} data-testid={`trash-photo-${photo.id}`}>
@@ -476,6 +554,22 @@ export default function TrashPage() {
                       }
                       onStartCustomizing={() =>
                         setPhotoCollisions((prev) => ({ ...prev, [photo.id]: { ...prev[photo.id], customizingNewName: true } }))
+                      }
+                    />
+                  )}
+                  {gone && (
+                    <FolderGonePanel
+                      state={gone}
+                      onUseExisting={() => resolveFolderGone(photo, "existing")}
+                      onCreateNew={(name) => resolveFolderGone(photo, "new", name || undefined)}
+                      onSelectFolder={(id) =>
+                        setFolderGoneStates((prev) => ({ ...prev, [photo.id]: { ...prev[photo.id], selectedFolderId: id } }))
+                      }
+                      onDraftChange={(draft) =>
+                        setFolderGoneStates((prev) => ({ ...prev, [photo.id]: { ...prev[photo.id], newNameDraft: draft } }))
+                      }
+                      onStartCustomizing={() =>
+                        setFolderGoneStates((prev) => ({ ...prev, [photo.id]: { ...prev[photo.id], customizingNewName: true } }))
                       }
                     />
                   )}
@@ -701,6 +795,100 @@ function PhotoCollisionPanel({
         </div>
       )}
       {collision.error && <p className="organize-new-folder-error">{collision.error}</p>}
+    </div>
+  );
+}
+
+// Photo-restore "folder is gone for good" panel (bug #5/#6): the photo's
+// original folder was PERMANENTLY purged while this photo was already
+// independently trashed and survived. There's no live same-named folder to
+// fall back on — the user picks ANY existing live folder, or creates a new
+// one (defaulting to the original folder's name).
+function FolderGonePanel({
+  state,
+  onUseExisting,
+  onCreateNew,
+  onSelectFolder,
+  onDraftChange,
+  onStartCustomizing,
+}: {
+  state: FolderGoneState;
+  onUseExisting: () => void;
+  onCreateNew: (name: string) => void;
+  onSelectFolder: (id: string) => void;
+  onDraftChange: (draft: string) => void;
+  onStartCustomizing: () => void;
+}) {
+  return (
+    <div className="trash-collision" data-testid="trash-folder-gone-panel">
+      <p className="trash-collision-title">
+        The folder &quot;{state.originalFolderName}&quot; this photo was in has been deleted
+      </p>
+      <p className="trash-collision-sub">
+        Choose an existing folder to recover it into, or create a new one:
+      </p>
+      {!state.customizingNewName ? (
+        <div className="trash-collision-actions">
+          {state.liveFolders.length > 0 && (
+            <div className="trash-collision-rename-row">
+              <select
+                value={state.selectedFolderId}
+                disabled={state.busy}
+                onChange={(e) => onSelectFolder(e.target.value)}
+              >
+                {state.liveFolders.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="trash-collision-merge"
+                disabled={state.busy || !state.selectedFolderId}
+                onClick={onUseExisting}
+              >
+                Put it here
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            className="trash-collision-rename"
+            disabled={state.busy}
+            onClick={() => onCreateNew("")}
+          >
+            Create a new &quot;{state.originalFolderName}&quot; folder
+          </button>
+          <button
+            type="button"
+            className="trash-collision-rename-link"
+            disabled={state.busy}
+            onClick={onStartCustomizing}
+          >
+            Name the new folder myself…
+          </button>
+        </div>
+      ) : (
+        <div className="trash-collision-rename-row">
+          <input
+            type="text"
+            placeholder={state.originalFolderName}
+            value={state.newNameDraft}
+            disabled={state.busy}
+            onChange={(e) => onDraftChange(e.target.value)}
+          />
+          <button
+            type="button"
+            className="trash-collision-rename"
+            disabled={state.busy}
+            onClick={() => onCreateNew(state.newNameDraft.trim())}
+          >
+            {state.busy ? "…" : "Create & restore"}
+          </button>
+        </div>
+      )}
+      {state.error && <p className="organize-new-folder-error">{state.error}</p>}
     </div>
   );
 }

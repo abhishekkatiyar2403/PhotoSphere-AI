@@ -44,6 +44,13 @@ export type AuditAction =
   | "access_approved"
   | "access_denied"
   | "guest_revoked"
+  // Owner changes an existing guest's permission level (e.g. view -> download)
+  // without revoking and re-sharing from scratch.
+  | "guest_permission_changed"
+  // Owner adds/removes ONE additional folder to/from an existing guest's
+  // share, independent of the other folders they already have.
+  | "guest_folder_added"
+  | "guest_folder_removed"
   | "photo_viewed"
   | "photo_downloaded"
   // specs/folder-mgmt-download-search.md P4 (F4): destructive folder ops that

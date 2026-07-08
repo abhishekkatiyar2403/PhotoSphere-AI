@@ -17,9 +17,15 @@ import {
   accessRequestsApi,
   ApiError,
   authApi,
+  collectionsApi,
+  Folder,
+  foldersApi,
   GuestListItem,
   guestsApi,
+  PermissionLevel,
 } from "@/lib/api";
+
+const PERMISSION_LEVELS: PermissionLevel[] = ["view", "download", "download_all"];
 
 // Owner-session-loss detector. Use this ONLY on calls where a 401 genuinely
 // means the OWNER's session is gone (the initial authApi.me() gate, the
@@ -54,6 +60,21 @@ export default function GuestsPage() {
   const [otpInputs, setOtpInputs] = useState<Record<string, string>>({});
   const [actionState, setActionState] = useState<Record<string, { busy: boolean; error: string | null }>>({});
   const [revokeState, setRevokeState] = useState<Record<string, { busy: boolean; error: string | null }>>({});
+  const [permissionState, setPermissionState] = useState<Record<string, { busy: boolean; error: string | null }>>({});
+
+  // ---- Per-folder access management (bug report: after a guest was
+  // approved, there was no way to later share MORE folders with them, or
+  // remove access to just one). ----
+  const [removeFolderState, setRemoveFolderState] = useState<
+    Record<string, { busy: boolean; error: string | null }>
+  >({}); // keyed by `${guestId}:${folderId}`
+  const [addFoldersTarget, setAddFoldersTarget] = useState<GuestListItem | null>(null);
+  const [ownerFolders, setOwnerFolders] = useState<Folder[]>([]);
+  const [ownerFoldersLoading, setOwnerFoldersLoading] = useState(false);
+  const [ownerFoldersError, setOwnerFoldersError] = useState<string | null>(null);
+  const [addFoldersSelected, setAddFoldersSelected] = useState<Set<string>>(new Set());
+  const [addFoldersBusy, setAddFoldersBusy] = useState(false);
+  const [addFoldersError, setAddFoldersError] = useState<string | null>(null);
 
   // ---- Auth gate (same pattern as /organize, /browse, /dashboard, /share) ----
   useEffect(() => {
@@ -156,6 +177,104 @@ export default function GuestsPage() {
     }
   }
 
+  // ---- Change an existing guest's permission level (bug report: previously
+  // the only option once shared was Revoke — no way to e.g. start someone at
+  // "view" and later upgrade them to "download" without tearing the share
+  // down and re-inviting from scratch). ----
+  async function handleChangePermission(guestId: string, permissionLevel: PermissionLevel) {
+    setPermissionState((prev) => ({ ...prev, [guestId]: { busy: true, error: null } }));
+    try {
+      await guestsApi.updatePermission(guestId, permissionLevel);
+      await load();
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      const message = err instanceof Error ? err.message : "Couldn't change permission";
+      setPermissionState((prev) => ({ ...prev, [guestId]: { busy: false, error: message } }));
+    }
+  }
+
+  // ---- Remove this guest's access to ONE specific folder (distinct from
+  // Revoke, which cuts off everything). ----
+  async function handleRemoveFolder(guestId: string, folderId: string) {
+    const key = `${guestId}:${folderId}`;
+    setRemoveFolderState((prev) => ({ ...prev, [key]: { busy: true, error: null } }));
+    try {
+      await guestsApi.removeFolder(guestId, folderId);
+      await load();
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      const message = err instanceof Error ? err.message : "Couldn't remove folder access";
+      setRemoveFolderState((prev) => ({ ...prev, [key]: { busy: false, error: message } }));
+    }
+  }
+
+  // ---- Share additional folders with an existing guest. Opens a small
+  // picker of the owner's folders NOT already shared with this guest. ----
+  async function openAddFolders(guest: GuestListItem) {
+    setAddFoldersTarget(guest);
+    setAddFoldersSelected(new Set());
+    setAddFoldersError(null);
+    setOwnerFoldersLoading(true);
+    setOwnerFoldersError(null);
+    try {
+      const { collections } = await collectionsApi.list();
+      const defaultCollection = collections.find((c) => c.isDefault) ?? collections[0];
+      if (!defaultCollection) {
+        setOwnerFolders([]);
+        return;
+      }
+      const { folders } = await foldersApi.list(defaultCollection.id);
+      setOwnerFolders(folders);
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      setOwnerFoldersError(err instanceof Error ? err.message : "Failed to load folders");
+    } finally {
+      setOwnerFoldersLoading(false);
+    }
+  }
+
+  function closeAddFolders() {
+    if (addFoldersBusy) return;
+    setAddFoldersTarget(null);
+  }
+
+  function toggleAddFolder(folderId: string) {
+    setAddFoldersSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  }
+
+  async function confirmAddFolders() {
+    if (!addFoldersTarget || addFoldersSelected.size === 0) return;
+    setAddFoldersBusy(true);
+    setAddFoldersError(null);
+    try {
+      await guestsApi.addFolders(addFoldersTarget.id, Array.from(addFoldersSelected));
+      setAddFoldersTarget(null);
+      await load();
+    } catch (err) {
+      if (isAuthError(err)) {
+        router.replace("/login");
+        return;
+      }
+      setAddFoldersError(err instanceof Error ? err.message : "Couldn't add folders");
+    } finally {
+      setAddFoldersBusy(false);
+    }
+  }
+
   if (checking) return null;
 
   return (
@@ -225,6 +344,13 @@ export default function GuestsPage() {
                         {timeAgo(request.createdAt)}
                       </div>
 
+                      {request.multipleDevicesDetected && (
+                        <p className="guests-multidevice-warning" data-testid={`guests-multidevice-warning-${request.id}`}>
+                          ⚠ This invite link was opened from {request.distinctDeviceCount} different devices/networks
+                          before this request was resolved — possibly forwarded to someone else. Review before approving.
+                        </p>
+                      )}
+
                       <div className="guests-pending-actions">
                         <input
                           type="text"
@@ -272,16 +398,32 @@ export default function GuestsPage() {
             ) : (
               guests.map((guest) => {
                 const revoke = revokeState[guest.id] ?? { busy: false, error: null };
+                const permission = permissionState[guest.id] ?? { busy: false, error: null };
                 const canRevoke = guest.status !== "revoked";
+                const canChangePermission = guest.status !== "revoked" && guest.permissionLevel != null;
                 return (
                   <div key={guest.id} className={`guests-roster-row${guest.status === "revoked" ? " revoked" : ""}`} data-testid={`guests-roster-row-${guest.id}`}>
                     <span className="email">{guest.email}</span>
                     <span className="meta">
-                      {guest.folders.map((f) => f.name).join(", ") || "no folders"}
-                      {guest.permissionLevel ? ` · ${guest.permissionLevel}` : ""}
-                      {guest.lastAccessAt ? ` · last seen ${timeAgo(guest.lastAccessAt)}` : ""}
+                      {guest.permissionLevel ? `${guest.permissionLevel} · ` : ""}
+                      {guest.lastAccessAt ? `last seen ${timeAgo(guest.lastAccessAt)}` : "not seen yet"}
                     </span>
                     <span className={`guests-status-pill ${guest.status}`}>{guest.status}</span>
+                    {canChangePermission && (
+                      <select
+                        className="guests-permission-select"
+                        value={guest.permissionLevel ?? ""}
+                        disabled={permission.busy}
+                        onChange={(e) => handleChangePermission(guest.id, e.target.value as PermissionLevel)}
+                        data-testid={`guests-permission-select-${guest.id}`}
+                      >
+                        {PERMISSION_LEVELS.map((level) => (
+                          <option key={level} value={level}>
+                            {level}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                     {canRevoke && (
                       <button
                         type="button"
@@ -294,6 +436,53 @@ export default function GuestsPage() {
                       </button>
                     )}
                     {revoke.error && <p className="guests-pending-error">{revoke.error}</p>}
+                    {permission.error && <p className="guests-pending-error">{permission.error}</p>}
+
+                    {/* Per-folder access — removable chips + "add more" (bug
+                        report: no way to share more folders or remove one
+                        after the fact). Hidden once fully revoked. */}
+                    {guest.status !== "revoked" && (
+                      <div className="guests-folder-chips">
+                        {guest.folders.length === 0 ? (
+                          <span className="guests-folder-empty">no folders</span>
+                        ) : (
+                          guest.folders.map((folder) => {
+                            const removeKey = `${guest.id}:${folder.id}`;
+                            const removeState = removeFolderState[removeKey] ?? { busy: false, error: null };
+                            return (
+                              <span key={folder.id} className="guests-folder-chip">
+                                {folder.name}
+                                <button
+                                  type="button"
+                                  className="guests-folder-chip-remove"
+                                  disabled={removeState.busy}
+                                  onClick={() => handleRemoveFolder(guest.id, folder.id)}
+                                  data-testid={`guests-remove-folder-${guest.id}-${folder.id}`}
+                                  title={`Remove access to "${folder.name}"`}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            );
+                          })
+                        )}
+                        <button
+                          type="button"
+                          className="guests-add-folders-btn"
+                          onClick={() => openAddFolders(guest)}
+                          data-testid={`guests-add-folders-${guest.id}`}
+                        >
+                          + Add folders
+                        </button>
+                      </div>
+                    )}
+                    {Object.entries(removeFolderState)
+                      .filter(([key, s]) => key.startsWith(`${guest.id}:`) && s.error)
+                      .map(([key, s]) => (
+                        <p key={key} className="guests-pending-error">
+                          {s.error}
+                        </p>
+                      ))}
                   </div>
                 );
               })
@@ -301,6 +490,67 @@ export default function GuestsPage() {
           </>
         )}
       </div>
+
+      {/* "Add folders" picker — the owner's folders NOT already shared with
+          this guest, checkbox multi-select, added at the guest's current
+          permission level. */}
+      {addFoldersTarget && (
+        <div
+          className="organize-modal-backdrop"
+          data-testid="add-folders-dialog"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeAddFolders();
+          }}
+        >
+          <div className="organize-modal">
+            <h3>Share more folders with {addFoldersTarget.email}</h3>
+            {ownerFoldersLoading && <p className="organize-empty">Loading your folders…</p>}
+            {ownerFoldersError && <p className="organize-new-folder-error">{ownerFoldersError}</p>}
+            {addFoldersError && <p className="organize-new-folder-error">{addFoldersError}</p>}
+            {!ownerFoldersLoading && !ownerFoldersError && (
+              <>
+                {(() => {
+                  const alreadyShared = new Set(addFoldersTarget.folders.map((f) => f.id));
+                  const candidates = ownerFolders.filter((f) => !alreadyShared.has(f.id));
+                  if (candidates.length === 0) {
+                    return <p className="organize-empty">Every folder is already shared with this guest.</p>;
+                  }
+                  return (
+                    <div className="add-folders-list">
+                      {candidates.map((folder) => (
+                        <label key={folder.id} className="add-folders-item">
+                          <input
+                            type="checkbox"
+                            checked={addFoldersSelected.has(folder.id)}
+                            disabled={addFoldersBusy}
+                            onChange={() => toggleAddFolder(folder.id)}
+                            data-testid={`add-folders-checkbox-${folder.id}`}
+                          />
+                          {folder.name} ({folder.photoCount})
+                        </label>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+            <div className="organize-modal-actions">
+              <button
+                type="button"
+                className="organize-modal-delete"
+                data-testid="add-folders-confirm"
+                disabled={addFoldersBusy || addFoldersSelected.size === 0}
+                onClick={confirmAddFolders}
+              >
+                {addFoldersBusy ? "Adding…" : `Add ${addFoldersSelected.size || ""} folder${addFoldersSelected.size === 1 ? "" : "s"}`}
+              </button>
+              <button type="button" className="organize-modal-cancel" disabled={addFoldersBusy} onClick={closeAddFolders}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

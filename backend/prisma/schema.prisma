@@ -160,6 +160,15 @@ model Photo {
   // listing query must check both.
   deletedAt DateTime? @map("deleted_at")
 
+  // Set ONLY when this photo was decoupled from a folder that got PERMANENTLY
+  // purged while the photo was already independently trashed (lib/purge.ts
+  // purgeFolder). Remembers the original folder's name so restore can ask
+  // "that folder is gone — pick an existing folder or create a new one"
+  // instead of silently dropping the photo into Unfiled. Cleared the moment
+  // the photo is actually restored (POST /api/photos/:id/restore), whichever
+  // folder it ends up in.
+  deletedFolderName String? @map("deleted_folder_name")
+
   owner      User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   jobs       ProcessingJob[]
   collection Collection?     @relation(fields: [collectionId], references: [id])
@@ -288,9 +297,31 @@ model AccessRequest {
 
   inviteToken InviteToken @relation(fields: [inviteTokenId], references: [id], onDelete: Cascade)
   guestUser   GuestUser   @relation(fields: [guestUserId], references: [id], onDelete: Cascade)
+  touches     AccessRequestTouch[]
 
   @@index([status, createdAt])
   @@map("access_requests")
+}
+
+// One row per "someone clicked the invite link while this request is still
+// pending" (link-forwarding detection). `ipAddress`/`deviceInfo` on
+// AccessRequest itself only ever reflect the FIRST click (kept for backward
+// compatibility with existing reads) — every click, including the first,
+// ALSO gets a row here, so the owner's approval queue can flag "this link
+// was opened from N different devices" before they approve. Never written
+// to after the request leaves `pending` (approved/denied/expired requests
+// don't accumulate further touches).
+model AccessRequestTouch {
+  id              String   @id @default(uuid())
+  accessRequestId String   @map("access_request_id")
+  ipAddress       String?  @map("ip_address")
+  deviceInfo      Json?    @map("device_info") // user-agent etc. — same shape as AccessRequest.deviceInfo
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  accessRequest AccessRequest @relation(fields: [accessRequestId], references: [id], onDelete: Cascade)
+
+  @@index([accessRequestId])
+  @@map("access_request_touches")
 }
 
 // ---------------------------------------------------------------------------

@@ -122,6 +122,9 @@ export type PhotoDetail = {
   status: "pending" | "processing" | "done" | "duplicate" | "failed";
   originalFilename: string;
   original: { url: string; expiresInSeconds: number };
+  // Separate from `original` — carries a forced-download disposition, only
+  // ever used to trigger an actual file save, never to display the photo.
+  download: { url: string; expiresInSeconds: number };
   thumbnails: Record<string, string>;
   exif: {
     takenAt: string | null;
@@ -153,6 +156,15 @@ export type BulkDeletePhotosResponse = {
   failed: { id: string; reason: "not_found" }[];
 };
 
+// Bulk move (organize multi-select "Move to…", max 100 ids) — same
+// partial-success shape as bulk-delete.
+export type BulkMovePhotosResponse = {
+  moved: string[];
+  failed: { id: string; reason: "not_found" }[];
+  folderId: string;
+  folderName: string;
+};
+
 // Photo restore (REVISED — backend commit 6443d87, specs/trash-system.md
 // FINAL DECISION 5 REVISED 2026-07-09): restoring a single trashed photo
 // whose folder is ALSO trashed never cascades into restoring that folder
@@ -178,6 +190,23 @@ export function isRestoreConflict(err: unknown): err is ApiError & { body: Resto
   return err instanceof ApiError && err.status === 409 && err.body?.error === "conflict";
 }
 
+// A DIFFERENT 409 shape, only for photo-restore: the photo's original folder
+// isn't just trashed — it's been PERMANENTLY purged (Delete forever, or the
+// 7-day auto-purge), while this photo was already independently trashed and
+// survived on its own clock. There's no "same-named live folder" to offer —
+// the old folder is gone for good — so the backend hands back every live
+// folder in the collection to choose from, plus the original name for
+// "create a new folder" framing.
+export type FolderDeletedBody = {
+  error: "folder_deleted";
+  originalFolderName: string;
+  liveFolders: { id: string; name: string }[];
+};
+
+export function isFolderDeletedConflict(err: unknown): err is ApiError & { body: FolderDeletedBody } {
+  return err instanceof ApiError && err.status === 409 && err.body?.error === "folder_deleted";
+}
+
 export type PhotoRestoreOnConflict = "existing" | "new";
 
 export const photosApi = {
@@ -193,9 +222,37 @@ export const photosApi = {
     apiFetch(`/api/photos/${photoId}`, { method: "DELETE" }),
   bulkDelete: (photoIds: string[]): Promise<BulkDeletePhotosResponse> =>
     apiFetch("/api/photos/bulk-delete", { method: "POST", body: JSON.stringify({ photoIds }) }),
+  bulkMove: (photoIds: string[], folderId: string): Promise<BulkMovePhotosResponse> =>
+    apiFetch("/api/photos/bulk-move", { method: "POST", body: JSON.stringify({ photoIds, folderId }) }),
+  // Not a JSON call — the response body is zip bytes. Fetches the archive as
+  // a Blob (credentials included, same as apiFetch) and triggers a normal
+  // browser download via a throwaway <a>, same end-user experience as the
+  // GET-based download-all links (which can use window.location.assign
+  // directly since they're plain GETs; this needs POST + a body).
+  downloadMany: async (photoIds: string[]): Promise<void> => {
+    const res = await fetch(`${API_BASE_URL}/api/photos/download-many`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ photoIds }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(body?.error ?? "Download failed", res.status, body ?? null);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "Selected Photos.zip";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
   restore: (
     photoId: string,
-    opts?: { onConflict?: PhotoRestoreOnConflict; newName?: string },
+    opts?: { onConflict?: PhotoRestoreOnConflict; newName?: string; targetFolderId?: string },
   ): Promise<PhotoRestoreResult> =>
     apiFetch(`/api/photos/${photoId}/restore`, {
       method: "POST",
@@ -452,6 +509,20 @@ export const guestsApi = {
   list: (): Promise<{ guests: GuestListItem[] }> => apiFetch("/api/guests", { method: "GET" }),
   revoke: (guestId: string): Promise<{ ok: true }> =>
     apiFetch(`/api/guests/${guestId}`, { method: "DELETE" }),
+  updatePermission: (
+    guestId: string,
+    permissionLevel: PermissionLevel,
+  ): Promise<{ ok: true; permissionLevel: PermissionLevel; foldersUpdated: number }> =>
+    apiFetch(`/api/guests/${guestId}`, { method: "PATCH", body: JSON.stringify({ permissionLevel }) }),
+  // Share ADDITIONAL folders with an already-invited guest, without
+  // touching their existing shares.
+  addFolders: (guestId: string, folderIds: string[]): Promise<{ ok: true; added: string[]; permissionLevel: PermissionLevel }> =>
+    apiFetch(`/api/guests/${guestId}/folders`, { method: "POST", body: JSON.stringify({ folderIds }) }),
+  // Remove access to ONE specific folder, leaving every other folder shared
+  // with this guest untouched (distinct from `revoke`, which cuts off
+  // everything).
+  removeFolder: (guestId: string, folderId: string): Promise<{ ok: true }> =>
+    apiFetch(`/api/guests/${guestId}/folders/${folderId}`, { method: "DELETE" }),
 };
 
 // Owner: the OTP-approval queue (GET/POST /api/access-requests).
@@ -465,6 +536,12 @@ export type AccessRequestItem = {
   deviceInfo: { userAgent: string | null } | null;
   createdAt: string;
   resolvedAt: string | null;
+  // Link-forwarding detection: how many times the invite link was clicked
+  // while pending, and from how many distinct IPs. `multipleDevicesDetected`
+  // is a signal to review before approving, not proof of anything.
+  touchCount: number;
+  distinctDeviceCount: number;
+  multipleDevicesDetected: boolean;
 };
 
 export const accessRequestsApi = {
@@ -534,6 +611,30 @@ export const guestPortalApi = {
     apiFetch(`/api/guest/photos/${photoId}`, { method: "GET" }),
   download: (photoId: string): Promise<{ download: { url: string; expiresInSeconds: number } }> =>
     apiFetch(`/api/guest/photos/${photoId}/download`, { method: "GET" }),
+  // Multi-select "Download selected" (works at `download` level, not just
+  // the stricter folder-wide `download_all`). Same not-JSON blob-download
+  // pattern as photosApi.downloadMany.
+  downloadMany: async (photoIds: string[]): Promise<void> => {
+    const res = await fetch(`${API_BASE_URL}/api/guest/photos/download-many`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ photoIds }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(body?.error ?? "Download failed", res.status, body ?? null);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "Selected Photos.zip";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };
 
 // --- Owner activity log (specs/audit-and-polish.md §A4, GET /api/audit) ---

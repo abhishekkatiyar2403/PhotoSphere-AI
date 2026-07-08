@@ -89,6 +89,14 @@ export default function GuestPortalPage() {
     error: null,
   });
 
+  // ---- Multi-select "Download selected" (works at `download` level, not
+  // just the stricter folder-wide `download_all` which already has its own
+  // "Download all" button above). Scoped to the CURRENT page/folder — reset
+  // whenever either changes, same as the owner-side /organize selection. ----
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<string>>(new Set());
+  const [bulkDownloadBusy, setBulkDownloadBusy] = useState(false);
+  const [bulkDownloadError, setBulkDownloadError] = useState<string | null>(null);
+
   const gridRequestIdRef = useRef(0);
 
   function stopPolling() {
@@ -234,6 +242,8 @@ export default function GuestPortalPage() {
       setPhotos(res.photos);
       setPhotosTotal(res.total);
       setPhotosOffset(res.offset);
+      setSelectedPhotoIds(new Set());
+      setBulkDownloadError(null);
     } catch (err) {
       if (reqId !== gridRequestIdRef.current) return;
       setPhotosError(err instanceof Error ? err.message : "Failed to load photos");
@@ -296,6 +306,37 @@ export default function GuestPortalPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Download failed";
       setDownloadState({ busy: false, error: message });
+    }
+  }
+
+  function toggleSelectPhoto(photoId: string) {
+    setSelectedPhotoIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(photoId)) next.delete(photoId);
+      else next.add(photoId);
+      return next;
+    });
+  }
+
+  function handleSelectAllOnPage() {
+    setSelectedPhotoIds(new Set(photos.map((p) => p.id)));
+  }
+
+  function clearSelection() {
+    setSelectedPhotoIds(new Set());
+  }
+
+  async function handleBulkDownload() {
+    const ids = Array.from(selectedPhotoIds);
+    if (ids.length === 0) return;
+    setBulkDownloadBusy(true);
+    setBulkDownloadError(null);
+    try {
+      await guestPortalApi.downloadMany(ids);
+    } catch (err) {
+      setBulkDownloadError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setBulkDownloadBusy(false);
     }
   }
 
@@ -442,9 +483,48 @@ export default function GuestPortalPage() {
 
                 {!photosLoading && photos.length > 0 && (
                   <>
+                    {canDownload && (
+                      <div className="portal-select-toolbar" data-testid="portal-select-toolbar">
+                        <button type="button" className="organize-selectall-btn" onClick={handleSelectAllOnPage}>
+                          Select all on page
+                        </button>
+                        {selectedPhotoIds.size > 0 && (
+                          <>
+                            <span className="organize-selectbar-count">{selectedPhotoIds.size} selected</span>
+                            <button
+                              type="button"
+                              className="portal-download-btn"
+                              data-testid="portal-download-selected"
+                              disabled={bulkDownloadBusy}
+                              onClick={handleBulkDownload}
+                            >
+                              {bulkDownloadBusy ? "Preparing…" : "Download selected"}
+                            </button>
+                            <button type="button" className="organize-selectall-link" onClick={clearSelection}>
+                              Clear
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {bulkDownloadError && <p className="portal-error">{bulkDownloadError}</p>}
                     <div className="portal-grid" data-testid="portal-photo-grid">
                       {photos.map((photo) => (
-                        <div key={photo.id} className="portal-card" data-testid={`portal-photo-card-${photo.id}`}>
+                        <div
+                          key={photo.id}
+                          className={`portal-card${selectedPhotoIds.has(photo.id) ? " portal-card-selected" : ""}`}
+                          data-testid={`portal-photo-card-${photo.id}`}
+                        >
+                          {canDownload && (
+                            <label className="portal-card-checkbox">
+                              <input
+                                type="checkbox"
+                                checked={selectedPhotoIds.has(photo.id)}
+                                onChange={() => toggleSelectPhoto(photo.id)}
+                                data-testid={`portal-select-${photo.id}`}
+                              />
+                            </label>
+                          )}
                           <button
                             type="button"
                             className="portal-card-thumb"

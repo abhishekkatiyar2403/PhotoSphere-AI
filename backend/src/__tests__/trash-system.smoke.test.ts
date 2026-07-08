@@ -333,6 +333,145 @@ describe("POST /api/photos/bulk-delete", () => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/photos/bulk-move — organize multi-select "Move to…"
+// ---------------------------------------------------------------------------
+describe("POST /api/photos/bulk-move", () => {
+  it("partial success: valid ids moved into the target folder, bogus id reported not_found; photoCount reconciled on both sides", async () => {
+    if (skipInfra()) return;
+    const targetName = `move-dst-${stamp}`;
+    const source = await seedFolder({ collectionId, ownerId, name: `move-src-${stamp}`, photos: 2 });
+    const target = await seedFolder({ collectionId, ownerId, name: targetName, photos: 0 });
+    const bogus = crypto.randomUUID();
+
+    const res = await request(app)
+      .post("/api/photos/bulk-move")
+      .set("Cookie", ownerCookie)
+      .send({ photoIds: [...source.photoIds, bogus], folderId: target.id });
+    expect(res.status).toBe(200);
+    expect(res.body.moved.sort()).toEqual(source.photoIds.sort());
+    expect(res.body.failed).toEqual([{ id: bogus, reason: "not_found" }]);
+    expect(res.body.folderName).toBe(targetName);
+
+    const sourceRow = await prisma.folder.findUnique({ where: { id: source.id } });
+    const targetRow = await prisma.folder.findUnique({ where: { id: target.id } });
+    expect(sourceRow?.photoCount).toBe(0);
+    expect(targetRow?.photoCount).toBe(2);
+    for (const id of source.photoIds) {
+      const moved = await prisma.photo.findUnique({ where: { id } });
+      expect(moved?.folderId).toBe(target.id);
+    }
+  });
+
+  it("404 when the target folder isn't owned or is trashed", async () => {
+    if (skipInfra()) return;
+    const source = await seedFolder({ collectionId, ownerId, name: `move-src2-${stamp}`, photos: 1 });
+    const trashedTarget = await seedFolder({
+      collectionId,
+      ownerId,
+      name: `move-dst-trashed-${stamp}`,
+      photos: 0,
+      deletedAt: new Date(),
+    });
+    const res = await request(app)
+      .post("/api/photos/bulk-move")
+      .set("Cookie", ownerCookie)
+      .send({ photoIds: source.photoIds, folderId: trashedTarget.id });
+    expect(res.status).toBe(404);
+
+    const otherCollection = await prisma.collection.create({
+      data: { ownerId: otherId, name: "Other Coll (bulk-move)", isDefault: false },
+    });
+    const notOwnedTarget = await prisma.folder.create({
+      data: { collectionId: otherCollection.id, name: `not-owned-${stamp}`, categoryType: "custom", photoCount: 0 },
+    });
+    const res2 = await request(app)
+      .post("/api/photos/bulk-move")
+      .set("Cookie", ownerCookie)
+      .send({ photoIds: source.photoIds, folderId: notOwnedTarget.id });
+    expect(res2.status).toBe(404);
+  });
+
+  it("400 on empty array and on >100 ids; 401 without a session", async () => {
+    if (skipInfra()) return;
+    const target = await seedFolder({ collectionId, ownerId, name: `move-dst3-${stamp}`, photos: 0 });
+    const empty = await request(app)
+      .post("/api/photos/bulk-move")
+      .set("Cookie", ownerCookie)
+      .send({ photoIds: [], folderId: target.id });
+    expect(empty.status).toBe(400);
+    const tooMany = await request(app)
+      .post("/api/photos/bulk-move")
+      .set("Cookie", ownerCookie)
+      .send({ photoIds: Array.from({ length: 101 }, () => crypto.randomUUID()), folderId: target.id });
+    expect(tooMany.status).toBe(400);
+    const noSession = await request(app)
+      .post("/api/photos/bulk-move")
+      .send({ photoIds: [crypto.randomUUID()], folderId: target.id });
+    expect(noSession.status).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/photos/download-many — organize multi-select "Download selected"
+// ---------------------------------------------------------------------------
+describe("POST /api/photos/download-many", () => {
+  it("zips exactly the requested, real, downloadable photos; excludes another owner's photo silently (not an error)", async () => {
+    if (skipInfra()) return;
+    const p1 = await seedRealPhoto({ ownerId, collectionId });
+    const p2 = await seedRealPhoto({ ownerId, collectionId });
+    const otherCollection = await prisma.collection.create({
+      data: { ownerId: otherId, name: "Other Coll (download-many)", isDefault: false },
+    });
+    const notMine = await seedRealPhoto({ ownerId: otherId, collectionId: otherCollection.id });
+
+    const res = await request(app)
+      .post("/api/photos/download-many")
+      .set("Cookie", ownerCookie)
+      .send({ photoIds: [p1.id, p2.id, notMine.id] })
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on("data", (c: Buffer) => chunks.push(c));
+        r.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/zip");
+    expect((res.body as Buffer).length).toBeGreaterThan(0);
+  });
+
+  it("excludes a trashed photo from the requested set (silent, not an error) but still zips the rest", async () => {
+    if (skipInfra()) return;
+    const live = await seedRealPhoto({ ownerId, collectionId });
+    const trashed = await seedRealPhoto({ ownerId, collectionId });
+    await request(app).delete(`/api/photos/${trashed.id}`).set("Cookie", ownerCookie);
+
+    const res = await request(app)
+      .post("/api/photos/download-many")
+      .set("Cookie", ownerCookie)
+      .send({ photoIds: [live.id, trashed.id] });
+    expect(res.status).toBe(200);
+  });
+
+  it("400 when NONE of the requested photos are downloadable (all trashed/foreign/bogus)", async () => {
+    if (skipInfra()) return;
+    const bogus = crypto.randomUUID();
+    const res = await request(app)
+      .post("/api/photos/download-many")
+      .set("Cookie", ownerCookie)
+      .send({ photoIds: [bogus] });
+    expect(res.status).toBe(400);
+  });
+
+  it("400 on empty array; 401 without a session", async () => {
+    if (skipInfra()) return;
+    const empty = await request(app).post("/api/photos/download-many").set("Cookie", ownerCookie).send({ photoIds: [] });
+    expect(empty.status).toBe(400);
+    const noSession = await request(app).post("/api/photos/download-many").send({ photoIds: [crypto.randomUUID()] });
+    expect(noSession.status).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // DELETE /api/folders/:id — soft delete (F1 unchanged, T-folder-photos)
 // ---------------------------------------------------------------------------
 describe("DELETE /api/folders/:id (soft delete, F1 unchanged)", () => {
@@ -750,6 +889,96 @@ describe("DELETE /api/trash/:type/:id (permanent, single item)", () => {
     expect(await prisma.photo.findUnique({ where: { id: p2.id } })).toBeNull();
     expect(await minioObjectExists(p1.s3Key)).toBe(false);
     expect(await minioObjectExists(p2.s3Key)).toBe(false);
+  });
+
+  it("permanently purging a folder PRESERVES a photo that was already independently trashed before the folder was — decouples it (folderId -> null) instead of destroying it, while still hard-deleting a sibling live photo", async () => {
+    if (skipInfra()) return;
+    const folder = await prisma.folder.create({
+      data: { collectionId, name: `purge-preserve-${stamp}`, categoryType: "custom", photoCount: 2 },
+    });
+    const alreadyTrashed = await seedRealPhoto({ ownerId, collectionId, folderId: folder.id });
+    const live = await seedRealPhoto({ ownerId, collectionId, folderId: folder.id });
+
+    // Individually soft-delete the first photo BEFORE the folder is trashed.
+    await request(app).delete(`/api/photos/${alreadyTrashed.id}`).set("Cookie", ownerCookie);
+    await request(app).delete(`/api/folders/${folder.id}`).set("Cookie", ownerCookie);
+
+    const res = await request(app).delete(`/api/trash/folder/${folder.id}`).set("Cookie", ownerCookie);
+    expect(res.status).toBe(200);
+
+    expect(await prisma.folder.findUnique({ where: { id: folder.id } })).toBeNull();
+
+    // The already-trashed photo survives, decoupled from the now-gone folder,
+    // still on its own independent trash clock.
+    const survived = await prisma.photo.findUnique({ where: { id: alreadyTrashed.id } });
+    expect(survived).not.toBeNull();
+    expect(survived!.folderId).toBeNull();
+    expect(survived!.deletedAt).not.toBeNull();
+    expect(await minioObjectExists(alreadyTrashed.s3Key)).toBe(true);
+
+    // The live (never individually trashed) sibling is still hard-deleted.
+    expect(await prisma.photo.findUnique({ where: { id: live.id } })).toBeNull();
+    expect(await minioObjectExists(live.s3Key)).toBe(false);
+
+    // Restoring it does NOT silently drop it in Unfiled (bug #6, superseding
+    // the original #5 fix's direct-restore behavior) — it 409s asking the
+    // user to pick a live folder or create a new one, since its original
+    // folder is permanently gone.
+    const conflictRes = await request(app)
+      .post(`/api/photos/${alreadyTrashed.id}/restore`)
+      .set("Cookie", ownerCookie);
+    expect(conflictRes.status).toBe(409);
+    expect(conflictRes.body.error).toBe("folder_deleted");
+    expect(conflictRes.body.originalFolderName).toBe(folder.name);
+    expect(await prisma.photo.findUnique({ where: { id: alreadyTrashed.id } })).toMatchObject({
+      deletedAt: expect.anything(),
+      folderId: null,
+    });
+
+    // onConflict=new (no newName) creates a brand-new folder using the
+    // original folder's name and restores the photo into it.
+    const restoreRes = await request(app)
+      .post(`/api/photos/${alreadyTrashed.id}/restore`)
+      .set("Cookie", ownerCookie)
+      .send({ onConflict: "new" });
+    expect(restoreRes.status).toBe(200);
+    expect(restoreRes.body.folder.name).toBe(folder.name);
+    const restored = await prisma.photo.findUnique({ where: { id: alreadyTrashed.id } });
+    expect(restored!.deletedAt).toBeNull();
+    expect(restored!.folderId).toBe(restoreRes.body.folder.id);
+    expect(restored!.folderId).not.toBe(folder.id); // a brand-new folder, not the purged one
+    expect(restored!.deletedFolderName).toBeNull();
+  });
+
+  it("permanently purging a folder + restoring the preserved photo — onConflict=existing lands it in a chosen live folder; the 409 offers every live folder in the collection", async () => {
+    if (skipInfra()) return;
+    const folder = await prisma.folder.create({
+      data: { collectionId, name: `purge-preserve-existing-${stamp}`, categoryType: "custom", photoCount: 1 },
+    });
+    const alreadyTrashed = await seedRealPhoto({ ownerId, collectionId, folderId: folder.id });
+    const otherLiveFolder = await prisma.folder.create({
+      data: { collectionId, name: `some-other-live-folder-${stamp}`, categoryType: "custom", photoCount: 0 },
+    });
+
+    await request(app).delete(`/api/photos/${alreadyTrashed.id}`).set("Cookie", ownerCookie);
+    await request(app).delete(`/api/folders/${folder.id}`).set("Cookie", ownerCookie);
+    await request(app).delete(`/api/trash/folder/${folder.id}`).set("Cookie", ownerCookie);
+
+    const conflictRes = await request(app)
+      .post(`/api/photos/${alreadyTrashed.id}/restore`)
+      .set("Cookie", ownerCookie);
+    expect(conflictRes.status).toBe(409);
+    const liveFolderIds: string[] = conflictRes.body.liveFolders.map((f: { id: string }) => f.id);
+    expect(liveFolderIds).toContain(otherLiveFolder.id);
+
+    const restoreRes = await request(app)
+      .post(`/api/photos/${alreadyTrashed.id}/restore`)
+      .set("Cookie", ownerCookie)
+      .send({ onConflict: "existing", targetFolderId: otherLiveFolder.id });
+    expect(restoreRes.status).toBe(200);
+    expect(restoreRes.body.folderId).toBe(otherLiveFolder.id);
+    const updatedOtherFolder = await prisma.folder.findUnique({ where: { id: otherLiveFolder.id } });
+    expect(updatedOtherFolder!.photoCount).toBe(1);
   });
 
   it("400 on an unknown :type", async () => {

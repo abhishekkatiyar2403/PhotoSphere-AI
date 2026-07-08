@@ -59,6 +59,35 @@ export async function getPresignedGetUrl(key: string, expiresInSeconds = 60): Pr
 }
 
 /**
+ * Same as getPresignedGetUrl, but with S3's `response-content-disposition`
+ * override set to `attachment` — this is what actually makes a browser save
+ * the file instead of just navigating to/rendering it (a plain GET presigned
+ * URL has no Content-Disposition of its own, so `window.open`/plain
+ * navigation on it just opens the image in the tab). Used for every
+ * "download this single photo" action (owner + guest) — never for the
+ * thumbnail/original URLs used to just DISPLAY a photo in the UI.
+ */
+export async function getPresignedDownloadUrl(
+  key: string,
+  filename: string,
+  expiresInSeconds = 60,
+): Promise<string> {
+  const command = new GetObjectCommand({
+    Bucket: BUCKET,
+    Key: key,
+    ResponseContentDisposition: `attachment; filename="${sanitizeContentDispositionFilename(filename)}"`,
+  });
+  return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
+}
+
+// Strips characters that would break the header value or allow injecting
+// extra header directives via a crafted originalFilename.
+function sanitizeContentDispositionFilename(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  return name.replace(/[\x00-\x1f"\\]/g, "_");
+}
+
+/**
  * Returns an AUTHORIZED server-side read stream for one MinIO object. The
  * backend holds the credentials; this is used by the on-the-fly folder-zip
  * assembly (lib/folderZip.ts) to pipe object bytes into the archive WITHOUT

@@ -88,14 +88,21 @@ export async function purgePhoto(
 
 /**
  * Permanently purge ONE folder: T5 (FINAL DECISION, Option A) — cascade
- * hard-delete ALL of its photos FIRST (regardless of whether those photos
- * ever got their own `deletedAt` set — they were never individually
- * soft-deleted per T-folder-photos, they were just attached to a trashed
- * folder), then delete the folder row. Tolerates the row already being gone.
+ * hard-delete every LIVE photo still attached to it (never individually
+ * soft-deleted — just attached to a trashed folder, no independent trash
+ * clock of its own), then delete the folder row.
  *
- * Per-photo purge here reuses `purgePhoto` (same cascade-null + DB delete +
- * MinIO cleanup) but its OWN photoCount-non-touch guarantee already covers
- * this — nothing extra needed for the cascade case.
+ * A photo that was ALREADY independently soft-deleted (its own `deletedAt`
+ * set, e.g. the user trashed it before trashing the folder) is NEVER swept
+ * into this cascade — it has its own 7-day trash clock and its own explicit
+ * recover/purge decision pending. Since the DB has no ON DELETE cascade on
+ * `Photo.folderId` (folder deletion would otherwise fail on a dangling FK),
+ * these photos are instead DECOUPLED — `folderId` set to null — right
+ * before the folder row is removed, so they keep existing, independently,
+ * and later restore straight into Unfiled (see photos.ts restore: a photo
+ * with `folderId === null` already restores directly, no folder involved).
+ *
+ * Tolerates the row already being gone.
  */
 export async function purgeFolder(
   folderId: string,
@@ -113,15 +120,30 @@ export async function purgeFolder(
   });
   const ownerId = collection?.ownerId ?? "";
 
-  // Cascade: hard-delete every photo currently pointing at this folder, ONE
-  // AT A TIME (per spec — not a single deleteMany, so the per-photo MinIO
-  // cleanup + duplicate-cascade-null runs for each; naturally idempotent on
-  // retry since purgePhoto tolerates an already-gone row).
-  const photos = await prisma.photo.findMany({
+  const allPhotos = await prisma.photo.findMany({
     where: { folderId: folder.id },
-    select: { id: true },
+    select: { id: true, deletedAt: true },
   });
-  for (const p of photos) {
+  const livePhotos = allPhotos.filter((p) => p.deletedAt === null);
+  const alreadyTrashedPhotos = allPhotos.filter((p) => p.deletedAt !== null);
+
+  // Decouple already-trashed photos FIRST so they never get swept into the
+  // live-photo cascade below and survive the folder row's deletion. Remember
+  // the folder's name on each so a later restore can ask the user to pick an
+  // existing folder or create a new one, instead of silently landing them in
+  // Unfiled (see photos.ts restore, deletedFolderName branch).
+  if (alreadyTrashedPhotos.length > 0) {
+    await prisma.photo.updateMany({
+      where: { id: { in: alreadyTrashedPhotos.map((p) => p.id) } },
+      data: { folderId: null, deletedFolderName: folder.name },
+    });
+  }
+
+  // Cascade: hard-delete every LIVE photo currently pointing at this folder,
+  // ONE AT A TIME (per spec — not a single deleteMany, so the per-photo
+  // MinIO cleanup + duplicate-cascade-null runs for each; naturally
+  // idempotent on retry since purgePhoto tolerates an already-gone row).
+  for (const p of livePhotos) {
     await purgePhoto(p.id, { trigger: opts.trigger, auditOwnerId: ownerId });
   }
 
@@ -141,6 +163,11 @@ export async function purgeFolder(
     action: "folder_permanently_deleted" satisfies AuditAction,
     resourceType: "folder",
     resourceId: folder.id,
-    metadata: { trigger: opts.trigger, folderName: folder.name, photosPurged: photos.length },
+    metadata: {
+      trigger: opts.trigger,
+      folderName: folder.name,
+      photosPurged: livePhotos.length,
+      photosPreserved: alreadyTrashedPhotos.length,
+    },
   });
 }

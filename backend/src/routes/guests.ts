@@ -5,7 +5,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { logAudit } from "../lib/audit";
 import { hashGuestToken, revokeGuestSessionsForGuest } from "../lib/guestSession";
 import { prisma } from "../lib/prisma";
-import { createGuestSchema } from "../lib/validation";
+import { addGuestFoldersSchema, createGuestSchema, updateGuestPermissionSchema } from "../lib/validation";
 import { requireAuth } from "../middleware/requireAuth";
 
 /**
@@ -178,7 +178,15 @@ router.get(
         return latest;
       }, null);
 
-      const permissionLevel = g.folderPermissions[0]?.permissionLevel ?? null;
+      // Only LIVE (non-revoked, non-expired) permissions represent what this
+      // guest can currently see — a fully- or per-folder-revoked permission
+      // shouldn't show up in "folders shared with them" (bug report: add/
+      // remove individual folders needs this list to reflect CURRENT access,
+      // not history).
+      const livePermissions = g.folderPermissions.filter(
+        (p) => !p.revokedAt && (!p.expiresAt || p.expiresAt.getTime() > now),
+      );
+      const permissionLevel = livePermissions[0]?.permissionLevel ?? g.folderPermissions[0]?.permissionLevel ?? null;
 
       return {
         id: g.id,
@@ -186,13 +194,210 @@ router.get(
         name: g.name,
         status,
         permissionLevel,
-        folders: g.folderPermissions.map((p) => ({ id: p.folder.id, name: p.folder.name })),
+        folders: livePermissions.map((p) => ({ id: p.folder.id, name: p.folder.name })),
         lastAccessAt: lastUsedAt,
         createdAt: g.createdAt,
       };
     });
 
     return res.status(200).json({ guests: items });
+  }),
+);
+
+// PATCH /api/guests/:id — change an existing guest's permission level
+// (bug report: previously the ONLY option once shared was Revoke — no way
+// to e.g. start a guest at `view` and later upgrade them to `download`
+// without tearing down and recreating the whole share). Applies the new
+// level to every currently-live (non-revoked) folder_permission row this
+// guest has — the same "one level per guest" model the GET /api/guests list
+// already assumes (it surfaces folderPermissions[0].permissionLevel as THE
+// guest's level). 404 if not owned. A guest with zero live permissions
+// (fully revoked/expired) has nothing to update — 404, not a silent no-op.
+router.patch(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    let input;
+    try {
+      input = updateGuestPermissionSchema.parse(req.body);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: err.flatten() });
+      }
+      throw err;
+    }
+
+    const ownerId = req.user!.id;
+    const guest = await prisma.guestUser.findUnique({ where: { id: req.params.id } });
+    if (!guest || guest.createdBy !== ownerId) {
+      return res.status(404).json({ error: "Guest not found" });
+    }
+
+    const now = new Date();
+    const result = await prisma.folderPermission.updateMany({
+      where: {
+        guestUserId: guest.id,
+        revokedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      data: { permissionLevel: input.permissionLevel },
+    });
+
+    if (result.count === 0) {
+      return res.status(404).json({ error: "Guest has no active shares to update" });
+    }
+
+    logAudit({
+      actorType: "owner",
+      actorId: ownerId,
+      ownerId,
+      action: "guest_permission_changed",
+      resourceType: "guest",
+      resourceId: guest.id,
+      metadata: { guestEmail: guest.email, permissionLevel: input.permissionLevel, foldersUpdated: result.count },
+      ipAddress: req.ip ?? null,
+    });
+
+    return res.status(200).json({ ok: true, permissionLevel: input.permissionLevel, foldersUpdated: result.count });
+  }),
+);
+
+// POST /api/guests/:id/folders — share one or more ADDITIONAL folders with
+// an existing guest, without touching their existing shares (bug report:
+// after approving a guest, there was no way to later share more folders with
+// them, or to remove access to just one). All-or-nothing on ownership: if
+// ANY requested folder isn't owned by this owner, 404 and add NOTHING.
+// A folder already LIVE-shared with this guest is silently skipped
+// (idempotent, not an error). A folder that was shared before and later
+// individually removed (see DELETE below) gets its existing row REACTIVATED
+// (revokedAt cleared) rather than a duplicate row — the schema has a
+// (guestUserId, folderId) unique constraint, exactly one row per pair ever.
+router.post(
+  "/:id/folders",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    let input;
+    try {
+      input = addGuestFoldersSchema.parse(req.body);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: err.flatten() });
+      }
+      throw err;
+    }
+
+    const ownerId = req.user!.id;
+    const guest = await prisma.guestUser.findUnique({
+      where: { id: req.params.id },
+      include: { folderPermissions: true },
+    });
+    if (!guest || guest.createdBy !== ownerId) {
+      return res.status(404).json({ error: "Guest not found" });
+    }
+
+    const uniqueFolderIds = [...new Set(input.folderIds)];
+    const folders = await prisma.folder.findMany({
+      where: { id: { in: uniqueFolderIds } },
+      include: { collection: { select: { ownerId: true } } },
+    });
+    const ownedFolders = folders.filter((f) => f.collection.ownerId === ownerId);
+    if (ownedFolders.length !== uniqueFolderIds.length) {
+      return res.status(404).json({ error: "One or more folders not found" });
+    }
+
+    const now = new Date();
+    // The guest's current level: any existing permission's level (this
+    // model assumes one level per guest, same as PATCH above), else fall
+    // back to "view" for a guest with no prior shares at all.
+    const currentLevel =
+      input.permissionLevel ??
+      guest.folderPermissions.find((p) => p.revokedAt == null)?.permissionLevel ??
+      guest.folderPermissions[0]?.permissionLevel ??
+      "view";
+
+    const existingByFolderId = new Map(guest.folderPermissions.map((p) => [p.folderId, p]));
+    const added: string[] = [];
+
+    for (const folder of ownedFolders) {
+      const existing = existingByFolderId.get(folder.id);
+      if (existing) {
+        if (existing.revokedAt == null) continue; // already live — skip, idempotent
+        await prisma.folderPermission.update({
+          where: { id: existing.id },
+          data: { revokedAt: null, permissionLevel: currentLevel, grantedBy: ownerId },
+        });
+      } else {
+        await prisma.folderPermission.create({
+          data: {
+            guestUserId: guest.id,
+            folderId: folder.id,
+            permissionLevel: currentLevel,
+            grantedBy: ownerId,
+          },
+        });
+      }
+      added.push(folder.id);
+    }
+
+    if (added.length > 0) {
+      logAudit({
+        actorType: "owner",
+        actorId: ownerId,
+        ownerId,
+        action: "guest_folder_added",
+        resourceType: "guest",
+        resourceId: guest.id,
+        metadata: {
+          guestEmail: guest.email,
+          folderIds: added,
+          folderNames: ownedFolders.filter((f) => added.includes(f.id)).map((f) => f.name),
+          permissionLevel: currentLevel,
+        },
+        ipAddress: req.ip ?? null,
+      });
+    }
+
+    return res.status(200).json({ ok: true, added, permissionLevel: currentLevel });
+  }),
+);
+
+// DELETE /api/guests/:id/folders/:folderId — remove this guest's access to
+// ONE specific folder, leaving every other folder they have untouched
+// (unlike DELETE /api/guests/:id below, which revokes everything). 404 if
+// the guest isn't owned, or has no LIVE permission on that folder already.
+router.delete(
+  "/:id/folders/:folderId",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const ownerId = req.user!.id;
+    const guest = await prisma.guestUser.findUnique({ where: { id: req.params.id } });
+    if (!guest || guest.createdBy !== ownerId) {
+      return res.status(404).json({ error: "Guest not found" });
+    }
+
+    const now = new Date();
+    const result = await prisma.folderPermission.updateMany({
+      where: { guestUserId: guest.id, folderId: req.params.folderId, revokedAt: null },
+      data: { revokedAt: now },
+    });
+    if (result.count === 0) {
+      return res.status(404).json({ error: "This guest doesn't have active access to that folder" });
+    }
+
+    const folder = await prisma.folder.findUnique({ where: { id: req.params.folderId }, select: { name: true } });
+
+    logAudit({
+      actorType: "owner",
+      actorId: ownerId,
+      ownerId,
+      action: "guest_folder_removed",
+      resourceType: "guest",
+      resourceId: guest.id,
+      metadata: { guestEmail: guest.email, folderId: req.params.folderId, folderName: folder?.name ?? null },
+      ipAddress: req.ip ?? null,
+    });
+
+    return res.status(200).json({ ok: true });
   }),
 );
 

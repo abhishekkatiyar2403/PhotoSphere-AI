@@ -83,6 +83,32 @@ async function uploadAndClassify(cookie: string, fixtureName: string, filename: 
   return { photoId: res.body.photoId as string, folderId: terminal.folderId as string };
 }
 
+// Runs the full request -> OTP -> approve -> poll flow and returns a live
+// guest session cookie + guestId, scoped to `folderIds` at `permissionLevel`.
+// Shared by the permission-change and download-many test blocks below so
+// they don't each hand-roll the OTP dance.
+async function establishGuestSession(
+  guestEmail: string,
+  folderIds: string[],
+  permissionLevel: string,
+): Promise<{ guestCookie: string; guestId: string }> {
+  const share = await request(app)
+    .post("/api/guests")
+    .set("Cookie", ownerCookie)
+    .send({ guestEmail, folderIds, permissionLevel });
+  const rawInvite = share.body.inviteToken as string;
+  const guestId = share.body.guestId as string;
+  const reqRes = await request(app).post(`/api/invites/${rawInvite}/request`);
+  const requestId = reqRes.body.requestId as string;
+  const otp = (await request(app).get(`/api/invites/requests/${requestId}/otp`)).body.otp as string;
+  await request(app).post(`/api/access-requests/${requestId}/approve`).set("Cookie", ownerCookie).send({ otp });
+  const poll = await request(app).get(`/api/invites/requests/${requestId}/status`);
+  const guestCookie = (poll.headers["set-cookie"] as unknown as string[]).find((c) =>
+    c.startsWith(`${GUEST_SESSION_COOKIE_NAME}=`),
+  )!;
+  return { guestCookie, guestId };
+}
+
 beforeAll(async () => {
   try {
     await prisma.$connect();
@@ -326,12 +352,16 @@ describe("full guest flow (request, OTP, approve, scope, revoke)", () => {
     expect(detail.body.original.url).toContain("X-Amz-");
     expect(detail.body.original.expiresInSeconds).toBe(60);
 
-    // Download allowed (permission is download).
+    // Download allowed (permission is download). The URL forces an actual
+    // save (Content-Disposition: attachment) rather than opening inline in a
+    // browser tab — bug report: "click download... shows the photo in
+    // another tab but not download".
     const dl = await request(app)
       .get(`/api/guest/photos/${photoId}/download`)
       .set("Cookie", guestCookie);
     expect(dl.status).toBe(200);
     expect(dl.body.download.url).toContain("X-Amz-");
+    expect(decodeURIComponent(dl.body.download.url)).toContain("response-content-disposition=attachment");
 
     // Cross-scope leakage: a folder the owner owns but did NOT share -> 404.
     if (unsharedFolderId && unsharedFolderId !== sharedFolderId) {
@@ -567,6 +597,416 @@ describe("authorization boundaries", () => {
       .set("Cookie", guestCookie);
     expect(dl.status).toBe(403);
   }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/guests/:id — change an existing guest's permission level
+// (bug report: previously the only option once shared was Revoke).
+// ---------------------------------------------------------------------------
+describe("PATCH /api/guests/:id — change permission level", () => {
+  it("upgrades view -> download on the live permission; an ALREADY-LIVE guest session's next download succeeds where it previously 403'd (no re-approval needed)", async () => {
+    if (skipWorker()) return;
+    const { guestCookie, guestId } = await establishGuestSession(
+      `upgrade-${stamp}@example.com`,
+      [sharedFolderId],
+      "view",
+    );
+
+    // Confirm the pre-upgrade baseline: view-only refuses download.
+    const photosRes = await request(app)
+      .get(`/api/guest/folders/${sharedFolderId}/photos`)
+      .set("Cookie", guestCookie);
+    const photoId = photosRes.body.photos[0].id as string;
+    const before = await request(app).get(`/api/guest/photos/${photoId}/download`).set("Cookie", guestCookie);
+    expect(before.status).toBe(403);
+
+    const patch = await request(app)
+      .patch(`/api/guests/${guestId}`)
+      .set("Cookie", ownerCookie)
+      .send({ permissionLevel: "download" });
+    expect(patch.status).toBe(200);
+    expect(patch.body.permissionLevel).toBe("download");
+    expect(patch.body.foldersUpdated).toBeGreaterThanOrEqual(1);
+
+    const perm = await prisma.folderPermission.findFirst({ where: { guestUserId: guestId } });
+    expect(perm?.permissionLevel).toBe("download");
+
+    // The SAME already-live session, no re-approval — the change takes
+    // effect immediately since permission is checked live on every request.
+    const after = await request(app).get(`/api/guest/photos/${photoId}/download`).set("Cookie", guestCookie);
+    expect(after.status).toBe(200);
+  }, 60_000);
+
+  it("404 when patching another owner's guest, or a nonexistent guest id — no effect", async () => {
+    if (skipWorker()) return;
+    const share = await request(app)
+      .post("/api/guests")
+      .set("Cookie", ownerCookie)
+      .send({ guestEmail: `patchx-${stamp}@example.com`, folderIds: [sharedFolderId], permissionLevel: "view" });
+    const guestId = share.body.guestId as string;
+
+    const foreign = await request(app)
+      .patch(`/api/guests/${guestId}`)
+      .set("Cookie", otherCookie)
+      .send({ permissionLevel: "download" });
+    expect(foreign.status).toBe(404);
+    const perm = await prisma.folderPermission.findFirst({ where: { guestUserId: guestId } });
+    expect(perm?.permissionLevel).toBe("view"); // untouched
+
+    const bogus = await request(app)
+      .patch(`/api/guests/${crypto.randomUUID()}`)
+      .set("Cookie", ownerCookie)
+      .send({ permissionLevel: "download" });
+    expect(bogus.status).toBe(404);
+  }, 45_000);
+
+  it("400 on an invalid permissionLevel; 401 without a session", async () => {
+    if (skipWorker()) return;
+    const share = await request(app)
+      .post("/api/guests")
+      .set("Cookie", ownerCookie)
+      .send({ guestEmail: `patchbad-${stamp}@example.com`, folderIds: [sharedFolderId], permissionLevel: "view" });
+    const guestId = share.body.guestId as string;
+
+    const bad = await request(app)
+      .patch(`/api/guests/${guestId}`)
+      .set("Cookie", ownerCookie)
+      .send({ permissionLevel: "nonsense" });
+    expect(bad.status).toBe(400);
+
+    const noSession = await request(app).patch(`/api/guests/${guestId}`).send({ permissionLevel: "download" });
+    expect(noSession.status).toBe(401);
+  }, 45_000);
+
+  it("404 for a guest whose only permission was already revoked", async () => {
+    if (skipWorker()) return;
+    const share = await request(app)
+      .post("/api/guests")
+      .set("Cookie", ownerCookie)
+      .send({ guestEmail: `patchrevoked-${stamp}@example.com`, folderIds: [sharedFolderId], permissionLevel: "view" });
+    const guestId = share.body.guestId as string;
+    await request(app).delete(`/api/guests/${guestId}`).set("Cookie", ownerCookie);
+
+    const patch = await request(app)
+      .patch(`/api/guests/${guestId}`)
+      .set("Cookie", ownerCookie)
+      .send({ permissionLevel: "download" });
+    expect(patch.status).toBe(404);
+  }, 45_000);
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/guest/photos/download-many — multi-select "Download selected"
+// (bug report: only single-photo download and, at `download_all` only,
+// whole-folder zip existed; no way to download a batch at plain `download`
+// level).
+// ---------------------------------------------------------------------------
+describe("POST /api/guest/photos/download-many", () => {
+  it("zips exactly the requested photos this guest has download access to; excludes an unpermitted folder's photo silently", async () => {
+    if (skipWorker()) return;
+    const { guestCookie } = await establishGuestSession(`dlmany-${stamp}@example.com`, [sharedFolderId], "download");
+
+    const photosRes = await request(app)
+      .get(`/api/guest/folders/${sharedFolderId}/photos`)
+      .set("Cookie", guestCookie);
+    const photoIds = photosRes.body.photos.map((p: { id: string }) => p.id);
+    expect(photoIds.length).toBeGreaterThan(0);
+
+    const idsToRequest = [...photoIds];
+    if (otherOwnerFolderId) {
+      const otherPhotos = await prisma.photo.findMany({ where: { folderId: otherOwnerFolderId }, take: 1 });
+      if (otherPhotos[0]) idsToRequest.push(otherPhotos[0].id);
+    }
+
+    const res = await request(app)
+      .post("/api/guest/photos/download-many")
+      .set("Cookie", guestCookie)
+      .send({ photoIds: idsToRequest })
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on("data", (c: Buffer) => chunks.push(c));
+        r.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/zip");
+    expect((res.body as Buffer).length).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("403-gated single-photo download still applies, but download-many EXCLUDES (not errors on) a view-only folder's photo — 400 if that's the only thing requested", async () => {
+    if (skipWorker()) return;
+    const { guestCookie } = await establishGuestSession(`dlmanyview-${stamp}@example.com`, [sharedFolderId], "view");
+    const photosRes = await request(app)
+      .get(`/api/guest/folders/${sharedFolderId}/photos`)
+      .set("Cookie", guestCookie);
+    const photoId = photosRes.body.photos[0].id as string;
+
+    const res = await request(app)
+      .post("/api/guest/photos/download-many")
+      .set("Cookie", guestCookie)
+      .send({ photoIds: [photoId] });
+    expect(res.status).toBe(400);
+  }, 60_000);
+
+  it("400 on empty array; 401 without a guest session", async () => {
+    const empty = await request(app).post("/api/guest/photos/download-many").send({ photoIds: [] });
+    expect([400, 401]).toContain(empty.status);
+    const noSession = await request(app)
+      .post("/api/guest/photos/download-many")
+      .send({ photoIds: [crypto.randomUUID()] });
+    expect(noSession.status).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/guests/:id/folders, DELETE /api/guests/:id/folders/:folderId —
+// per-folder access management on an existing guest (bug report: after a
+// guest was approved, there was no way to later share MORE folders with
+// them, or remove access to just one).
+// ---------------------------------------------------------------------------
+describe("POST /api/guests/:id/folders — share additional folders", () => {
+  it("adds a second folder at the guest's current level; already-shared folder is silently skipped; a LIVE guest session immediately sees the new folder with no re-approval", async () => {
+    if (skipWorker()) return;
+    if (!unsharedFolderId || unsharedFolderId === sharedFolderId) return; // needs a distinct second folder
+    const { guestCookie, guestId } = await establishGuestSession(
+      `addfolders-${stamp}@example.com`,
+      [sharedFolderId],
+      "download",
+    );
+
+    // Baseline: the second folder isn't visible yet.
+    const before = await request(app).get("/api/guest/folders").set("Cookie", guestCookie);
+    expect(before.body.folders.map((f: { id: string }) => f.id)).not.toContain(unsharedFolderId);
+
+    const add = await request(app)
+      .post(`/api/guests/${guestId}/folders`)
+      .set("Cookie", ownerCookie)
+      .send({ folderIds: [sharedFolderId, unsharedFolderId] }); // one dup, one new
+    expect(add.status).toBe(200);
+    expect(add.body.added).toEqual([unsharedFolderId]); // the already-shared one was skipped
+    expect(add.body.permissionLevel).toBe("download");
+
+    const perm = await prisma.folderPermission.findFirst({
+      where: { guestUserId: guestId, folderId: unsharedFolderId },
+    });
+    expect(perm?.permissionLevel).toBe("download");
+    expect(perm?.revokedAt).toBeNull();
+
+    // Same already-live session, no re-approval — sees it immediately.
+    const after = await request(app).get("/api/guest/folders").set("Cookie", guestCookie);
+    expect(after.body.folders.map((f: { id: string }) => f.id)).toContain(unsharedFolderId);
+  }, 60_000);
+
+  it("reactivates a previously fully-removed folder (unique guestUserId+folderId row) rather than erroring on a duplicate", async () => {
+    if (skipWorker()) return;
+    if (!unsharedFolderId || unsharedFolderId === sharedFolderId) return;
+    const { guestId } = await establishGuestSession(`reactivate-${stamp}@example.com`, [sharedFolderId], "view");
+
+    // Add, then remove, then add again — the SAME row should be reused (no
+    // unique-constraint violation), just un-revoked.
+    await request(app).post(`/api/guests/${guestId}/folders`).set("Cookie", ownerCookie).send({ folderIds: [unsharedFolderId] });
+    const firstRow = await prisma.folderPermission.findFirst({ where: { guestUserId: guestId, folderId: unsharedFolderId } });
+    await request(app).delete(`/api/guests/${guestId}/folders/${unsharedFolderId}`).set("Cookie", ownerCookie);
+
+    const reAdd = await request(app)
+      .post(`/api/guests/${guestId}/folders`)
+      .set("Cookie", ownerCookie)
+      .send({ folderIds: [unsharedFolderId] });
+    expect(reAdd.status).toBe(200);
+    expect(reAdd.body.added).toEqual([unsharedFolderId]);
+
+    const secondRow = await prisma.folderPermission.findFirst({ where: { guestUserId: guestId, folderId: unsharedFolderId } });
+    expect(secondRow?.id).toBe(firstRow?.id); // same row, reactivated — not a new one
+    expect(secondRow?.revokedAt).toBeNull();
+  }, 60_000);
+
+  it("404, adds NOTHING, when any requested folder isn't owned by the caller", async () => {
+    if (skipWorker()) return;
+    const share = await request(app)
+      .post("/api/guests")
+      .set("Cookie", ownerCookie)
+      .send({ guestEmail: `addx-${stamp}@example.com`, folderIds: [sharedFolderId], permissionLevel: "view" });
+    const guestId = share.body.guestId as string;
+
+    const foreignFolders = otherOwnerFolderId
+      ? [otherOwnerFolderId]
+      : [crypto.randomUUID()];
+    const res = await request(app)
+      .post(`/api/guests/${guestId}/folders`)
+      .set("Cookie", ownerCookie)
+      .send({ folderIds: foreignFolders });
+    expect(res.status).toBe(404);
+
+    const perms = await prisma.folderPermission.findMany({ where: { guestUserId: guestId } });
+    expect(perms.length).toBe(1); // only the original share — nothing added
+  }, 45_000);
+
+  it("404 when the guest itself isn't owned by the caller; 400 on empty folderIds; 401 without a session", async () => {
+    if (skipWorker()) return;
+    const share = await request(app)
+      .post("/api/guests")
+      .set("Cookie", ownerCookie)
+      .send({ guestEmail: `addforeign-${stamp}@example.com`, folderIds: [sharedFolderId], permissionLevel: "view" });
+    const guestId = share.body.guestId as string;
+
+    const foreign = await request(app)
+      .post(`/api/guests/${guestId}/folders`)
+      .set("Cookie", otherCookie)
+      .send({ folderIds: [sharedFolderId] });
+    expect(foreign.status).toBe(404);
+
+    const empty = await request(app)
+      .post(`/api/guests/${guestId}/folders`)
+      .set("Cookie", ownerCookie)
+      .send({ folderIds: [] });
+    expect(empty.status).toBe(400);
+
+    const noSession = await request(app).post(`/api/guests/${guestId}/folders`).send({ folderIds: [sharedFolderId] });
+    expect(noSession.status).toBe(401);
+  }, 45_000);
+});
+
+describe("DELETE /api/guests/:id/folders/:folderId — remove access to ONE folder", () => {
+  it("revokes only that folder, leaving other shared folders untouched; guest immediately loses access to it on their live session", async () => {
+    if (skipWorker()) return;
+    if (!unsharedFolderId || unsharedFolderId === sharedFolderId) return;
+    const { guestCookie, guestId } = await establishGuestSession(
+      `removefolder-${stamp}@example.com`,
+      [sharedFolderId, unsharedFolderId],
+      "download",
+    );
+
+    const before = await request(app).get("/api/guest/folders").set("Cookie", guestCookie);
+    expect(before.body.folders.map((f: { id: string }) => f.id).sort()).toEqual(
+      [sharedFolderId, unsharedFolderId].sort(),
+    );
+
+    const del = await request(app)
+      .delete(`/api/guests/${guestId}/folders/${unsharedFolderId}`)
+      .set("Cookie", ownerCookie);
+    expect(del.status).toBe(200);
+
+    const perm = await prisma.folderPermission.findFirst({
+      where: { guestUserId: guestId, folderId: unsharedFolderId },
+    });
+    expect(perm?.revokedAt).not.toBeNull();
+    const otherPerm = await prisma.folderPermission.findFirst({
+      where: { guestUserId: guestId, folderId: sharedFolderId },
+    });
+    expect(otherPerm?.revokedAt).toBeNull(); // untouched
+
+    const after = await request(app).get("/api/guest/folders").set("Cookie", guestCookie);
+    const afterIds = after.body.folders.map((f: { id: string }) => f.id);
+    expect(afterIds).toContain(sharedFolderId);
+    expect(afterIds).not.toContain(unsharedFolderId);
+  }, 60_000);
+
+  it("404 for a folder this guest never had, or already had removed; 404 for another owner's guest", async () => {
+    if (skipWorker()) return;
+    const share = await request(app)
+      .post("/api/guests")
+      .set("Cookie", ownerCookie)
+      .send({ guestEmail: `delfolderx-${stamp}@example.com`, folderIds: [sharedFolderId], permissionLevel: "view" });
+    const guestId = share.body.guestId as string;
+
+    const neverShared = await request(app)
+      .delete(`/api/guests/${guestId}/folders/${crypto.randomUUID()}`)
+      .set("Cookie", ownerCookie);
+    expect(neverShared.status).toBe(404);
+
+    const alreadyRemoved = await request(app)
+      .delete(`/api/guests/${guestId}/folders/${sharedFolderId}`)
+      .set("Cookie", ownerCookie);
+    expect(alreadyRemoved.status).toBe(200);
+    const secondAttempt = await request(app)
+      .delete(`/api/guests/${guestId}/folders/${sharedFolderId}`)
+      .set("Cookie", ownerCookie);
+    expect(secondAttempt.status).toBe(404); // already revoked, not live anymore
+
+    const foreignShare = await request(app)
+      .post("/api/guests")
+      .set("Cookie", ownerCookie)
+      .send({ guestEmail: `delforeign-${stamp}@example.com`, folderIds: [sharedFolderId], permissionLevel: "view" });
+    const foreignGuestId = foreignShare.body.guestId as string;
+    const foreign = await request(app)
+      .delete(`/api/guests/${foreignGuestId}/folders/${sharedFolderId}`)
+      .set("Cookie", otherCookie);
+    expect(foreign.status).toBe(404);
+  }, 45_000);
+});
+
+// ---------------------------------------------------------------------------
+// Link-forwarding detection — GET /api/access-requests flags a pending
+// request that was opened from more than one IP before it was resolved.
+// ---------------------------------------------------------------------------
+describe("link-forwarding detection (touchCount / distinctDeviceCount)", () => {
+  it("a single click reports touchCount 1, distinctDeviceCount 1, multipleDevicesDetected false", async () => {
+    if (skipWorker()) return;
+    const share = await request(app)
+      .post("/api/guests")
+      .set("Cookie", ownerCookie)
+      .send({ guestEmail: `onetouch-${stamp}@example.com`, folderIds: [sharedFolderId], permissionLevel: "view" });
+    const rawInvite = share.body.inviteToken as string;
+    await request(app).post(`/api/invites/${rawInvite}/request`);
+
+    const list = await request(app).get("/api/access-requests?status=pending").set("Cookie", ownerCookie);
+    const item = list.body.requests.find((r: { guest: { email: string } }) => r.guest.email === `onetouch-${stamp}@example.com`);
+    expect(item).toBeTruthy();
+    expect(item.touchCount).toBe(1);
+    expect(item.distinctDeviceCount).toBe(1);
+    expect(item.multipleDevicesDetected).toBe(false);
+  }, 45_000);
+
+  it("re-clicking the SAME link while pending records another touch and reuses the SAME request (no new OTP) — a distinct-IP re-click flags multipleDevicesDetected", async () => {
+    if (skipWorker()) return;
+    const share = await request(app)
+      .post("/api/guests")
+      .set("Cookie", ownerCookie)
+      .send({ guestEmail: `forwarded-${stamp}@example.com`, folderIds: [sharedFolderId], permissionLevel: "view" });
+    const rawInvite = share.body.inviteToken as string;
+
+    const first = await request(app).post(`/api/invites/${rawInvite}/request`);
+    const requestId = first.body.requestId as string;
+
+    // Re-click the same link — reused, not a new request.
+    const second = await request(app).post(`/api/invites/${rawInvite}/request`);
+    expect(second.status).toBe(200);
+    expect(second.body.requestId).toBe(requestId);
+
+    const touchesAfterSameIp = await prisma.accessRequestTouch.findMany({ where: { accessRequestId: requestId } });
+    expect(touchesAfterSameIp.length).toBe(2); // both clicks recorded...
+
+    // In this test environment every request shares one loopback IP (no
+    // reverse-proxy header trust configured), so two clicks from the actual
+    // test client still count as ONE device — this directly exercises that
+    // the aggregation is IP-based, not just a raw click counter.
+    const sameIpList = await request(app).get("/api/access-requests?status=pending").set("Cookie", ownerCookie);
+    const sameIpItem = sameIpList.body.requests.find((r: { id: string }) => r.id === requestId);
+    expect(sameIpItem.touchCount).toBe(2);
+    expect(sameIpItem.distinctDeviceCount).toBe(1);
+    expect(sameIpItem.multipleDevicesDetected).toBe(false);
+
+    // Simulate what an ACTUAL forwarded-link click looks like: a touch from
+    // a genuinely different IP. (Exercising GET /api/access-requests's real
+    // aggregation logic against real rows — the click itself, from a
+    // different network, is exactly what lib/notifications' deviceInfo
+    // capture already records correctly in production; only the "different
+    // IP" part needs simulating here since the test client is one machine.)
+    await prisma.accessRequestTouch.create({
+      data: { accessRequestId: requestId, ipAddress: "203.0.113.9", deviceInfo: { userAgent: "curl/8.0" } },
+    });
+
+    const list = await request(app).get("/api/access-requests?status=pending").set("Cookie", ownerCookie);
+    const item = list.body.requests.find((r: { id: string }) => r.id === requestId);
+    expect(item.touchCount).toBe(3);
+    expect(item.distinctDeviceCount).toBe(2);
+    expect(item.multipleDevicesDetected).toBe(true);
+
+    // Still only ONE otp/email was ever generated — re-clicking never spams
+    // a fresh code (unchanged G10 behavior).
+    const arRow = await prisma.accessRequest.findUnique({ where: { id: requestId } });
+    expect(arRow?.otpHash).toBeTruthy();
+  }, 45_000);
 });
 
 if (!fs.existsSync(fixture("fixture-people.jpg"))) {

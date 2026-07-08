@@ -11,10 +11,12 @@ import { prisma } from "../lib/prisma";
 import { serializableTransaction } from "../lib/serializableTransaction";
 import { PhotoProcessingJobData, photoProcessingQueue } from "../lib/queue";
 import { putObject } from "../lib/storage";
-import { getPresignedGetUrl } from "../lib/storage";
+import { getPresignedDownloadUrl, getPresignedGetUrl } from "../lib/storage";
 import { originalKey, thumbnailKey } from "../lib/storageKeys";
 import {
   bulkDeletePhotosSchema,
+  bulkMovePhotosSchema,
+  downloadManyPhotosSchema,
   folderPhotosQuerySchema,
   movePhotoSchema,
   photoRestoreSchema,
@@ -24,6 +26,8 @@ import { reclassifyRateLimiter } from "../middleware/reclassifyRateLimiter";
 import { uploadRateLimiter } from "../middleware/uploadRateLimiter";
 import { PHOTO_CARD_SELECT, toPhotoCard } from "../lib/photoCard";
 import { computePurgeAt, findLiveFolderByName, generateNonCollidingRecoveredName } from "./folders";
+import { preflightDownloadByIds } from "../lib/folderDownload";
+import { streamFolderZip } from "../lib/folderZip";
 
 const router = Router();
 
@@ -272,6 +276,10 @@ router.get(
     }
 
     const originalUrl = await getPresignedGetUrl(photo.s3Key, 60);
+    // Separate from `original.url` above — that one is used to DISPLAY the
+    // photo (lightbox/viewer), so it must never carry a forced-download
+    // disposition. This one is only ever used by the "Download" button.
+    const downloadUrl = await getPresignedDownloadUrl(photo.s3Key, photo.originalFilename, 60);
 
     const thumbnails: Record<string, string> = {};
     // Only include thumbnail sizes that exist so far - the worker may not
@@ -297,6 +305,7 @@ router.get(
       // rationale as the exif addition below.
       originalFilename: photo.originalFilename,
       original: { url: originalUrl, expiresInSeconds: 60 },
+      download: { url: downloadUrl, expiresInSeconds: 60 },
       thumbnails,
       // Additive fields per specs/ai-classification.md §7 (carry-over c:
       // EXIF is finally Tester-verifiable without DB access; nulls where absent).
@@ -428,6 +437,104 @@ router.patch(
     });
 
     return res.status(200).json({ id: photo.id, folderId: folder.id, folderName: folder.name });
+  }),
+);
+
+// POST /api/photos/bulk-move — move many selected photos (organize
+// multi-select "Move to…") into one target folder in one request. Same
+// partial-success/per-id shape as bulk-delete: a bad id (not owned, trashed,
+// or the target folder itself not owned/trashed) is reported "not_found",
+// never leaking why, and doesn't fail the whole batch. Each move reuses the
+// exact same guarded-photoCount transaction as the single PATCH /:id move.
+router.post(
+  "/bulk-move",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    let input;
+    try {
+      input = bulkMovePhotosSchema.parse(req.body);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: err.flatten() });
+      }
+      throw err;
+    }
+
+    const folder = await prisma.folder.findUnique({
+      where: { id: input.folderId },
+      include: { collection: { select: { id: true, ownerId: true } } },
+    });
+    if (!folder || folder.collection.ownerId !== req.user!.id || folder.deletedAt != null) {
+      return res.status(404).json({ error: "Target folder not found" });
+    }
+
+    const moved: string[] = [];
+    const failed: { id: string; reason: "not_found" }[] = [];
+
+    for (const photoId of input.photoIds) {
+      const photo = await prisma.photo.findUnique({ where: { id: photoId } });
+      if (!photo || photo.ownerId !== req.user!.id || photo.deletedAt != null) {
+        failed.push({ id: photoId, reason: "not_found" });
+        continue;
+      }
+
+      await serializableTransaction(async (tx) => {
+        const current = await tx.photo.findUnique({ where: { id: photo.id }, select: { folderId: true } });
+        const previousFolderId = current?.folderId ?? null;
+
+        await tx.photo.update({
+          where: { id: photo.id },
+          data: { folderId: folder.id, collectionId: folder.collection.id },
+        });
+
+        if (previousFolderId !== folder.id) {
+          if (previousFolderId) {
+            await tx.folder.updateMany({
+              where: { id: previousFolderId, photoCount: { gt: 0 } },
+              data: { photoCount: { decrement: 1 } },
+            });
+          }
+          await tx.folder.update({
+            where: { id: folder.id },
+            data: { photoCount: { increment: 1 } },
+          });
+        }
+      });
+
+      moved.push(photo.id);
+    }
+
+    return res.status(200).json({ moved, failed, folderId: folder.id, folderName: folder.name });
+  }),
+);
+
+// POST /api/photos/download-many — zip a caller-chosen set of photos
+// (organize multi-select "Download selected"), reusing the exact same
+// streaming zip assembly as folder download-all. An id that isn't owned,
+// isn't a stored `done` original, or is trashed is silently excluded (Z4),
+// not an error, matching bulk-delete/bulk-move's partial-success spirit —
+// but a request where NOTHING is downloadable, or too much is, still gets a
+// clean 400/409 (Z6/Z3) before any byte is streamed.
+router.post(
+  "/download-many",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    let input;
+    try {
+      input = downloadManyPhotosSchema.parse(req.body);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: err.flatten() });
+      }
+      throw err;
+    }
+
+    const pre = await preflightDownloadByIds(input.photoIds, req.user!.id);
+    if (!pre.ok) {
+      return res.status(pre.status).json({ error: pre.error });
+    }
+
+    await streamFolderZip(res, { folderName: "Selected Photos", photos: pre.photos });
   }),
 );
 
@@ -680,6 +787,20 @@ router.post(
 // it always lands in a LIVE folder (existing or freshly created):
 //   1. 404 if not owned or not currently trashed (unchanged).
 //   2. folderId null (was Unfiled) -> restore directly (unchanged).
+//   2b. folderId null AND deletedFolderName is set (its folder was
+//       PERMANENTLY purged while this photo was already independently
+//       trashed, see lib/purge.ts) -> do NOT silently drop it in Unfiled.
+//       Ask instead:
+//         - no onConflict -> 409 { error: "folder_deleted", originalFolderName,
+//           liveFolders: [{id,name}] } (every live folder in the photo's
+//           collection, not just a same-name match — the old folder is gone
+//           for good, any folder is a fair pick).
+//         - onConflict "existing" + targetFolderId -> restore into that
+//           folder (must be live and in the same collection).
+//         - onConflict "new" (+ optional newName) -> create a brand-new
+//           folder (newName or the original folder's name, collision-
+//           tolerant) and restore into it.
+//       deletedFolderName is cleared the moment the photo actually restores.
 //   3. folder is LIVE -> restore directly into it, guarded-increment
 //      photoCount inside serializableTransaction() (unchanged, already correct).
 //   4. folder is TRASHED -> look for a LIVE folder in the same collection
@@ -714,6 +835,43 @@ router.post(
     });
     if (!photo || photo.ownerId !== req.user!.id || photo.deletedAt == null) {
       return res.status(404).json({ error: "Photo not found" });
+    }
+
+    // Case 2b: this photo's folder was PERMANENTLY purged while the photo
+    // was already independently trashed (lib/purge.ts decoupled it, leaving
+    // deletedFolderName as a breadcrumb). Never silently drop it in Unfiled —
+    // ask the user to pick a live folder or create a new one.
+    if (photo.folderId == null && photo.deletedFolderName) {
+      if (!input?.onConflict) {
+        const liveFolders = await prisma.folder.findMany({
+          where: { collectionId: photo.collectionId ?? undefined, deletedAt: null },
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        });
+        return res.status(409).json({
+          error: "folder_deleted",
+          originalFolderName: photo.deletedFolderName,
+          liveFolders,
+        });
+      }
+
+      if (input.onConflict === "existing") {
+        if (!input.targetFolderId) {
+          return res.status(400).json({ error: "targetFolderId is required for onConflict=existing" });
+        }
+        const target = await prisma.folder.findUnique({ where: { id: input.targetFolderId } });
+        if (!target || target.deletedAt != null || target.collectionId !== photo.collectionId) {
+          return res.status(404).json({ error: "Target folder not found" });
+        }
+        return restorePhotoInto(req, res, photo.id, target.id);
+      }
+
+      // onConflict === "new": create a brand-new folder (newName or the
+      // original folder's name, collision-tolerant) and restore into it.
+      const collectionId = photo.collectionId!;
+      const desiredName = input.newName ?? photo.deletedFolderName;
+      const newFolder = await createFolderTolerantly(collectionId, desiredName);
+      return restorePhotoInto(req, res, photo.id, newFolder.id);
     }
 
     // Case 2: photo was Unfiled when trashed — simple direct restore, no
@@ -810,7 +968,7 @@ async function restorePhotoInto(
   const restored = await serializableTransaction(async (tx) => {
     const claimed = await tx.photo.updateMany({
       where: { id: photoId, deletedAt: { not: null } },
-      data: { deletedAt: null, folderId: targetFolderId },
+      data: { deletedAt: null, folderId: targetFolderId, deletedFolderName: null },
     });
     if (claimed.count !== 1) return null;
     if (targetFolderId) {

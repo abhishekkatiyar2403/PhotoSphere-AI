@@ -2,13 +2,13 @@ import { Router } from "express";
 import { ZodError } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logAudit } from "../lib/audit";
-import { preflightFolderDownload } from "../lib/folderDownload";
+import { DOWNLOAD_ALL_MAX_PHOTOS, preflightFolderDownload } from "../lib/folderDownload";
 import { streamFolderZip } from "../lib/folderZip";
 import { PHOTO_CARD_SELECT, toPhotoCard } from "../lib/photoCard";
 import { prisma } from "../lib/prisma";
-import { getPresignedGetUrl } from "../lib/storage";
+import { getPresignedDownloadUrl, getPresignedGetUrl } from "../lib/storage";
 import { thumbnailKey } from "../lib/storageKeys";
-import { folderPhotosQuerySchema } from "../lib/validation";
+import { downloadManyPhotosSchema, folderPhotosQuerySchema } from "../lib/validation";
 import {
   getFolderPermissionLevel,
   getPermittedFolderIds,
@@ -233,8 +233,87 @@ router.get(
       ipAddress: req.ip ?? null,
     });
 
-    const url = await getPresignedGetUrl(photo.s3Key, 60);
+    // A forced-download URL (Content-Disposition: attachment), not the plain
+    // view URL used elsewhere — this is what makes the browser actually save
+    // the file instead of just opening it in the requesting tab (bug report:
+    // "click download... shows the photo in another tab but not download").
+    const url = await getPresignedDownloadUrl(photo.s3Key, photo.originalFilename, 60);
     return res.status(200).json({ download: { url, expiresInSeconds: 60 } });
+  }),
+);
+
+// POST /api/guest/photos/download-many — zip a caller-chosen set of photos
+// this guest has DOWNLOAD access to (bug report: multi-select + "select all"
+// should be able to download the batch even when the guest's permission is
+// `download`, not the folder-wide `download_all` — that stricter level still
+// gates the single-request whole-folder zip below). Every requested photo
+// must belong to a folder in the guest's permitted set AND that folder's
+// live permission level must be `download` or `download_all` — a photo from
+// a view-only folder, or not permitted at all, is silently excluded (Z4-style
+// partial inclusion), never a hard error for the whole batch.
+router.post(
+  "/photos/download-many",
+  requireGuest,
+  asyncHandler(async (req, res) => {
+    let input;
+    try {
+      input = downloadManyPhotosSchema.parse(req.body);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: err.flatten() });
+      }
+      throw err;
+    }
+
+    const guestUserId = req.guest!.guestUserId;
+    const permittedIds = await getPermittedFolderIds(guestUserId);
+
+    const candidates = await prisma.photo.findMany({
+      where: {
+        id: { in: input.photoIds },
+        aiClassificationStatus: "done",
+        s3Key: { not: "" },
+        deletedAt: null,
+        folderId: { in: [...permittedIds] },
+      },
+      select: { id: true, s3Key: true, originalFilename: true, folderId: true, ownerId: true },
+    });
+
+    // Per-folder permission-level check (view-only folders excluded even
+    // though they're in the permitted set — that set only proves visibility,
+    // not download rights).
+    const levelCache = new Map<string, string | null>();
+    const downloadable: { s3Key: string; originalFilename: string }[] = [];
+    for (const photo of candidates) {
+      const folderId = photo.folderId!;
+      if (!levelCache.has(folderId)) {
+        levelCache.set(folderId, await getFolderPermissionLevel(guestUserId, folderId));
+      }
+      const level = levelCache.get(folderId);
+      if (level === "download" || level === "download_all") {
+        downloadable.push({ s3Key: photo.s3Key, originalFilename: photo.originalFilename });
+      }
+    }
+
+    if (downloadable.length === 0) {
+      return res.status(400).json({ error: "None of the selected photos can be downloaded" });
+    }
+    if (downloadable.length > DOWNLOAD_ALL_MAX_PHOTOS) {
+      return res.status(409).json({ error: "Too many photos selected to download as a single zip — narrow it down" });
+    }
+
+    logAudit({
+      actorType: "guest",
+      actorId: guestUserId,
+      ownerId: candidates[0]?.ownerId ?? "",
+      action: "photo_downloaded",
+      resourceType: "photo",
+      resourceId: "multiple",
+      metadata: { count: downloadable.length },
+      ipAddress: req.ip ?? null,
+    });
+
+    await streamFolderZip(res, { folderName: "Selected Photos", photos: downloadable });
   }),
 );
 

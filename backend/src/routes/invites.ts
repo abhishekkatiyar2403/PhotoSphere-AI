@@ -167,6 +167,17 @@ router.post(
       orderBy: { createdAt: "desc" },
     });
     if (existingPending) {
+      // Link-forwarding detection: record THIS click too, even though we're
+      // not sending a new OTP for it — the point is to notice if the SAME
+      // pending request is being hit from more than one device/IP before
+      // the owner approves (see GET /api/access-requests's touchSummary).
+      await prisma.accessRequestTouch.create({
+        data: {
+          accessRequestId: existingPending.id,
+          ipAddress: clientIp(req),
+          deviceInfo: deviceInfo(req),
+        },
+      });
       return res.status(200).json({ requestId: existingPending.id, status: "pending" });
     }
 
@@ -187,6 +198,13 @@ router.post(
         otpExpiresAt,
         otpAttempts: 0,
       },
+    });
+
+    // Also recorded as touch #1 (see AccessRequestTouch) so "distinct
+    // devices seen" always includes the original requester, not just
+    // subsequent re-clicks.
+    await prisma.accessRequestTouch.create({
+      data: { accessRequestId: ar.id, ipAddress: clientIp(req), deviceInfo: deviceInfo(req) },
     });
 
     await sendOwnerOtp({
