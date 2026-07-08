@@ -103,3 +103,53 @@ Retargeted 3 pre-existing `folder-mgmt.smoke.test.ts` assertions that depended o
 ## Files touched
 
 `backend/prisma/schema.prisma`, `backend/prisma/migrations/20260707201747_add_trash_system/migration.sql` (new), `backend/src/lib/storage.ts`, `backend/src/lib/audit.ts`, `backend/src/lib/validation.ts`, `backend/src/lib/guestShareGuard.ts` (new), `backend/src/lib/purge.ts` (new), `backend/src/lib/trashPurgeJob.ts` (new), `backend/src/lib/queue.ts`, `backend/src/lib/photoCard.ts`, `backend/src/lib/folderDownload.ts`, `backend/src/worker.ts`, `backend/src/app.ts`, `backend/src/routes/trash.ts` (new), `backend/src/routes/photos.ts`, `backend/src/routes/folders.ts`, `backend/src/routes/guest.ts`, `backend/src/routes/search.ts`, `backend/src/routes/collections.ts`, `backend/src/routes/dashboard.ts`, `backend/src/middleware/requireGuest.ts`, `backend/src/__tests__/trash-system.smoke.test.ts` (new), `backend/src/__tests__/folder-mgmt.smoke.test.ts`.
+
+---
+
+## ADDENDUM (2026-07-09) — photo-restore no longer cascades into restoring its trashed folder
+
+**Commit:** `6443d87` on `feature/ai-classification` (local only, not pushed, no `Co-Authored-By: Claude` trailer).
+**Reason:** product-behavior revision, not a bug in the original build. Abhishek found in live testing that `POST /api/photos/:id/restore` on a photo whose folder was ALSO trashed auto-restored the ENTIRE folder (and every other photo in it) before restoring the requested photo — surprising, since "recover this one photo" shouldn't resurrect a whole folder. This addendum documents `specs/trash-system.md`'s FINAL DECISION 5, REVISED 2026-07-09, which supersedes the original "photo-restore cascades to folder-restore" design in the same section.
+
+### What changed
+
+`POST /api/photos/:id/restore` in `backend/src/routes/photos.ts`. The trashed folder a photo used to belong to is now **never** touched by this endpoint — no restoring it, no touching its `deletedAt`/`photoCount`/other photos. The requested photo always lands in a LIVE folder instead:
+
+1. 404 if not owned / not currently trashed — unchanged.
+2. `folderId` null (was Unfiled) — restore directly — unchanged.
+3. Folder is LIVE — restore directly into it, guarded-increment `photoCount` in `serializableTransaction()` — unchanged, already correct.
+4. **Folder is TRASHED (the fix):** read the trashed folder's `name`/`collectionId` only (never write to it), then:
+   - Look for a LIVE folder in the same collection with that name.
+   - Found + no `onConflict` in the body → **409** `{ error: "conflict", conflictingFolderId, conflictingFolderName }`, photo not yet restored.
+   - Found + `onConflict: "existing"` → restore the photo into `conflictingFolderId`, guarded-increment its `photoCount`.
+   - Found + `onConflict: "new"` → create a BRAND NEW folder (not the trashed one), named `newName` if given (Zod: trim/min1/max255) else auto-generated `"<original name> (recovered)"`, restore into it (`photoCount` starts at 1).
+   - Not found at all → skip the conflict step entirely, auto-create a new folder with the ORIGINAL name and restore into it.
+   - In every one of these branches the original trashed folder's `deletedAt`, `photoCount`, and every other photo under it are byte-for-byte untouched, and it can still be restored later, on its own clock, via its own unchanged `POST /api/folders/:id/restore` endpoint.
+
+### Auto-naming collision retry
+
+New `generateNonCollidingRecoveredName(collectionId, baseName)` in `backend/src/routes/folders.ts` (exported, reused by `photos.ts`): tries `"<base> (recovered)"`, then `"<base> (recovered 2)"`, `"(recovered 3)"`, etc., checking against LIVE folders only (`deletedAt: null`) each time, capped at 20 attempts — throws a clear error rather than looping forever if all 20 are somehow taken. `createFolderTolerantly()` in `photos.ts` attempts the desired name first and falls back to this generator on a rare `P2002` race (something else created the exact same live folder name between the check and the create).
+
+New `photoRestoreSchema` in `backend/src/lib/validation.ts`: `{ onConflict?: "existing" | "new", newName?: string }` — deliberately a different enum (`"existing"`/`"new"`) from `folderRestoreSchema`'s `"merge"`/`"rename"`, since this is resolving "where does the ONE photo land," not "how does the folder itself get restored" — a different decision with different semantics, kept as a separate schema/type (`PhotoRestoreInput`) rather than overloading the folder one.
+
+### Test coverage changed/added (`trash-system.smoke.test.ts`)
+
+Removed the two tests that asserted the OLD cascade behavior ("auto-cascades restoring the photo's ALSO-trashed folder first" and "returns the SAME 409 conflict shape as folder-restore when the auto-cascade hits a collision"). Added five new tests under `POST /api/photos/:id/restore`:
+
+- No live same-named folder exists → auto-creates a new folder with the original name, photo lands there, original trashed folder's `deletedAt`/`photoCount`/other photo fully untouched.
+- A live same-named folder exists, no `onConflict` → 409 with the conflict shape, photo still trashed, original folder untouched.
+- Same scenario + `onConflict: "existing"` → photo lands in the existing live folder, its `photoCount` increments by exactly 1, original trashed folder untouched.
+- Same scenario + `onConflict: "new"` (no `newName`) → a genuinely NEW folder (distinct id from both the original trashed one and the existing live one) with the auto-generated `"(recovered)"` name, photo lands there, both other folders' counts untouched.
+- Confirms the original trashed folder can STILL be independently restored afterward via `POST /api/folders/:id/restore` — including exercising the (expected, unrelated) T7 name-collision this creates against the auto-created recovered folder, resolved via that endpoint's own `onConflict: "rename"`.
+
+**Full backend suite: 173 → 176, all green.**
+
+### Verification results
+
+1. `npm run typecheck -w backend` — clean.
+2. `npm run lint -w backend` — clean.
+3. `npm test -w backend` — **176/176 green** (13 test files, all passing).
+
+### Known follow-up, not built this pass (out of explicit scope)
+
+`frontend/src/app/trash/page.tsx`'s `resolvePhotoCollision()` still implements the OLD behavior: on a photo-restore 409, it calls `foldersApi.restore(collision.photoFolderId, onConflict, newName)` (i.e., it resolves the collision by restoring/merging/renaming the trashed FOLDER, then retries the photo restore) — that endpoint and its `merge`/`rename` vocabulary no longer apply to this flow at all. The frontend needs a follow-up change to call `photosApi.restore(photo.id, { onConflict: "existing" | "new", newName })` directly instead, and to update the inline collision-resolution copy/buttons to say "put this photo in the existing folder" / "create a new folder for it" rather than "merge into" / "rename" (which describe restoring the whole folder, not just relocating one photo). Flagging clearly rather than leaving the UI silently broken against the new backend contract — recommend this as the next Developer pass once picked up.
