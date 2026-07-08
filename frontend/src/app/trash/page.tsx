@@ -15,7 +15,17 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ApiError, authApi, isRestoreConflict, photosApi, RestoreConflictBody, trashApi, TrashFolderItem, TrashPhotoItem } from "@/lib/api";
+import {
+  ApiError,
+  authApi,
+  isRestoreConflict,
+  PhotoRestoreOnConflict,
+  photosApi,
+  RestoreConflictBody,
+  trashApi,
+  TrashFolderItem,
+  TrashPhotoItem,
+} from "@/lib/api";
 
 const PAGE_LIMIT = 20;
 const URGENT_DAYS = 2;
@@ -37,11 +47,20 @@ type CollisionState = {
   error: string | null;
 };
 
-// Same shape reused for a photo-restore cascade hitting a folder collision —
-// keyed by photo id instead, but resolved via the SAME foldersApi.restore
-// call (targeting conflictingFolderId's sibling — the photo's own trashed
-// folder id, tracked separately below).
-type PhotoCollisionState = CollisionState & { photoFolderId: string };
+// Photo-restore collision state (REVISED — backend commit 6443d87): a single
+// trashed photo whose folder is ALSO trashed no longer cascades into
+// restoring that folder. The choice here is "existing" (drop the photo into
+// the live same-named folder) vs "new" (leave the trashed folder alone,
+// create/use a brand-new folder for just this photo) — a different
+// vocabulary from CollisionState's merge/rename, which is folder-restore-only.
+type PhotoCollisionState = {
+  conflictingFolderId: string;
+  conflictingFolderName: string;
+  customizingNewName: boolean; // true once the user opts to type a custom new-folder name
+  newNameDraft: string;
+  busy: boolean;
+  error: string | null;
+};
 
 export default function TrashPage() {
   const router = useRouter();
@@ -68,6 +87,15 @@ export default function TrashPage() {
 
   const [folderCollisions, setFolderCollisions] = useState<Record<string, CollisionState>>({});
   const [photoCollisions, setPhotoCollisions] = useState<Record<string, PhotoCollisionState>>({});
+
+  // Brief, cheap confirmation of which folder a restored photo landed in —
+  // auto-clears after a few seconds. Not required by spec, just nice.
+  const [restoreToast, setRestoreToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!restoreToast) return;
+    const t = setTimeout(() => setRestoreToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [restoreToast]);
 
   useEffect(() => {
     authApi
@@ -129,7 +157,7 @@ export default function TrashPage() {
     setBusyId(photo.id);
     clearRowError(photo.id);
     try {
-      await photosApi.restore(photo.id);
+      const result = await photosApi.restore(photo.id);
       setPhotos((prev) => prev.filter((p) => p.id !== photo.id));
       setPhotoTotal((prev) => Math.max(0, prev - 1));
       setPhotoCollisions((prev) => {
@@ -138,6 +166,9 @@ export default function TrashPage() {
         delete next[photo.id];
         return next;
       });
+      if (result.folder) {
+        setRestoreToast(`Restored "${photo.originalFilename}" to "${result.folder.name}"`);
+      }
     } catch (err) {
       if (isAuthError(err)) {
         router.replace("/login");
@@ -150,11 +181,10 @@ export default function TrashPage() {
           [photo.id]: {
             conflictingFolderId: body.conflictingFolderId,
             conflictingFolderName: body.conflictingFolderName,
-            renaming: false,
-            renameDraft: "",
+            customizingNewName: false,
+            newNameDraft: "",
             busy: false,
             error: null,
-            photoFolderId: photo.folderId as string,
           },
         }));
       } else {
@@ -165,17 +195,18 @@ export default function TrashPage() {
     }
   }
 
-  // ---- Resolve a photo-restore collision: restore the photo's OWN trashed
-  // folder with the chosen onConflict, then retry the photo restore. ----
-  async function resolvePhotoCollision(photo: TrashPhotoItem, onConflict: "merge" | "rename", newName?: string) {
+  // ---- Resolve a photo-restore collision (REVISED — backend commit 6443d87):
+  // calls the PHOTO restore endpoint itself with the chosen onConflict — the
+  // photo's own trashed folder is never touched, never restored. "existing"
+  // lands the photo in the live same-named folder; "new" creates/uses a
+  // brand-new folder just for this photo (newName optional — the backend
+  // auto-generates a safe name when omitted). ----
+  async function resolvePhotoCollision(photo: TrashPhotoItem, onConflict: PhotoRestoreOnConflict, newName?: string) {
     const collision = photoCollisions[photo.id];
     if (!collision) return;
     setPhotoCollisions((prev) => ({ ...prev, [photo.id]: { ...collision, busy: true, error: null } }));
     try {
-      const { foldersApi } = await import("@/lib/api");
-      await foldersApi.restore(collision.photoFolderId, onConflict, newName);
-      // Folder collision resolved — retry the photo restore.
-      await photosApi.restore(photo.id);
+      const result = await photosApi.restore(photo.id, { onConflict, newName });
       setPhotos((prev) => prev.filter((p) => p.id !== photo.id));
       setPhotoTotal((prev) => Math.max(0, prev - 1));
       setPhotoCollisions((prev) => {
@@ -183,6 +214,9 @@ export default function TrashPage() {
         delete next[photo.id];
         return next;
       });
+      if (result.folder) {
+        setRestoreToast(`Restored "${photo.originalFilename}" to "${result.folder.name}"`);
+      }
     } catch (err) {
       if (isAuthError(err)) {
         router.replace("/login");
@@ -344,6 +378,11 @@ export default function TrashPage() {
       </div>
 
       <div className="trash-content">
+        {restoreToast && (
+          <p className="trash-restore-toast" data-testid="trash-restore-toast">
+            {restoreToast}
+          </p>
+        )}
         <div className="trash-header">
           <div>
             <h2>Trash</h2>
@@ -428,15 +467,15 @@ export default function TrashPage() {
                   </div>
                   {rowError[photo.id] && <p className="organize-new-folder-error trash-row-error">{rowError[photo.id]}</p>}
                   {collision && (
-                    <CollisionPanel
+                    <PhotoCollisionPanel
                       collision={collision}
-                      onMerge={() => resolvePhotoCollision(photo, "merge")}
-                      onRename={(name) => resolvePhotoCollision(photo, "rename", name)}
+                      onUseExisting={() => resolvePhotoCollision(photo, "existing")}
+                      onCreateNew={(name) => resolvePhotoCollision(photo, "new", name || undefined)}
                       onDraftChange={(draft) =>
-                        setPhotoCollisions((prev) => ({ ...prev, [photo.id]: { ...prev[photo.id], renameDraft: draft } }))
+                        setPhotoCollisions((prev) => ({ ...prev, [photo.id]: { ...prev[photo.id], newNameDraft: draft } }))
                       }
-                      onStartRename={() =>
-                        setPhotoCollisions((prev) => ({ ...prev, [photo.id]: { ...prev[photo.id], renaming: true } }))
+                      onStartCustomizing={() =>
+                        setPhotoCollisions((prev) => ({ ...prev, [photo.id]: { ...prev[photo.id], customizingNewName: true } }))
                       }
                     />
                   )}
@@ -588,6 +627,81 @@ export default function TrashPage() {
         </div>
       )}
     </main>
+  );
+}
+
+// Photo-restore collision panel (REVISED — backend commit 6443d87). This is
+// deliberately NOT the same copy as CollisionPanel below: restoring a single
+// PHOTO never brings back the whole trashed folder anymore, so "Merge"/
+// "Rename" language (which describes restoring/renaming an entire folder)
+// would misdescribe what's actually happening. The real choice for a photo
+// is: drop it into the live folder that already has this name, or leave the
+// old trashed folder alone and get a fresh folder just for this one photo.
+function PhotoCollisionPanel({
+  collision,
+  onUseExisting,
+  onCreateNew,
+  onDraftChange,
+  onStartCustomizing,
+}: {
+  collision: PhotoCollisionState;
+  onUseExisting: () => void;
+  onCreateNew: (name: string) => void;
+  onDraftChange: (draft: string) => void;
+  onStartCustomizing: () => void;
+}) {
+  return (
+    <div className="trash-collision" data-testid="trash-photo-collision-panel">
+      <p className="trash-collision-title">
+        A folder named &quot;{collision.conflictingFolderName}&quot; already exists
+      </p>
+      <p className="trash-collision-sub">
+        This photo&apos;s original folder is still in the trash and won&apos;t be restored. Choose where this photo
+        should go instead:
+      </p>
+      {!collision.customizingNewName ? (
+        <div className="trash-collision-actions">
+          <button type="button" className="trash-collision-merge" disabled={collision.busy} onClick={onUseExisting}>
+            Put it in the existing &quot;{collision.conflictingFolderName}&quot; folder
+          </button>
+          <button
+            type="button"
+            className="trash-collision-rename"
+            disabled={collision.busy}
+            onClick={() => onCreateNew("")}
+          >
+            Create a new folder for it
+          </button>
+          <button
+            type="button"
+            className="trash-collision-rename-link"
+            disabled={collision.busy}
+            onClick={onStartCustomizing}
+          >
+            Name the new folder myself…
+          </button>
+        </div>
+      ) : (
+        <div className="trash-collision-rename-row">
+          <input
+            type="text"
+            placeholder={`${collision.conflictingFolderName} (recovered)`}
+            value={collision.newNameDraft}
+            disabled={collision.busy}
+            onChange={(e) => onDraftChange(e.target.value)}
+          />
+          <button
+            type="button"
+            className="trash-collision-rename"
+            disabled={collision.busy}
+            onClick={() => onCreateNew(collision.newNameDraft.trim())}
+          >
+            {collision.busy ? "…" : "Create & restore"}
+          </button>
+        </div>
+      )}
+      {collision.error && <p className="organize-new-folder-error">{collision.error}</p>}
+    </div>
   );
 }
 

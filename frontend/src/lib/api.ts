@@ -153,12 +153,18 @@ export type BulkDeletePhotosResponse = {
   failed: { id: string; reason: "not_found" }[];
 };
 
-// Photo restore auto-cascades into restoring an also-trashed folder first; if
-// that hits an unresolved name collision, the call REJECTS with an ApiError
-// (status 409, .body carrying the SAME conflict shape a folder-restore 409
-// does: { error: "conflict", conflictingFolderId, conflictingFolderName }) —
-// same as foldersApi.restore's collision. Callers catch it via ApiError, not
-// a discriminated return value.
+// Photo restore (REVISED — backend commit 6443d87, specs/trash-system.md
+// FINAL DECISION 5 REVISED 2026-07-09): restoring a single trashed photo
+// whose folder is ALSO trashed never cascades into restoring that folder
+// anymore. If a LIVE same-named folder exists and the caller hasn't said
+// what to do, the call REJECTS with an ApiError (status 409, .body carrying
+// { error: "conflict", conflictingFolderId, conflictingFolderName }) — same
+// 409 shape as foldersApi.restore's collision, but resolved with a DIFFERENT
+// vocabulary: onConflict is "existing" | "new" here (never "merge"/"rename",
+// which are folder-restore-only concepts). "new" needs no newName — the
+// backend auto-generates a safe "<name> (recovered)"-style name — newName is
+// an optional override. Callers catch the 409 via ApiError, not a
+// discriminated return value.
 export type PhotoRestoreResult = {
   restored: true;
   id: string;
@@ -171,6 +177,8 @@ export type RestoreConflictBody = { error: "conflict"; conflictingFolderId: stri
 export function isRestoreConflict(err: unknown): err is ApiError & { body: RestoreConflictBody } {
   return err instanceof ApiError && err.status === 409 && err.body?.error === "conflict";
 }
+
+export type PhotoRestoreOnConflict = "existing" | "new";
 
 export const photosApi = {
   upload: uploadFile,
@@ -185,8 +193,14 @@ export const photosApi = {
     apiFetch(`/api/photos/${photoId}`, { method: "DELETE" }),
   bulkDelete: (photoIds: string[]): Promise<BulkDeletePhotosResponse> =>
     apiFetch("/api/photos/bulk-delete", { method: "POST", body: JSON.stringify({ photoIds }) }),
-  restore: (photoId: string): Promise<PhotoRestoreResult> =>
-    apiFetch(`/api/photos/${photoId}/restore`, { method: "POST" }),
+  restore: (
+    photoId: string,
+    opts?: { onConflict?: PhotoRestoreOnConflict; newName?: string },
+  ): Promise<PhotoRestoreResult> =>
+    apiFetch(`/api/photos/${photoId}/restore`, {
+      method: "POST",
+      body: JSON.stringify(opts ?? {}),
+    }),
 };
 
 // Trash page (design/wireframes/trash-page.svg, Option A — dedicated /trash
