@@ -200,3 +200,59 @@ multi-select confirm, matching this task's explicit instruction (NOT
 - `frontend/src/lib/api.ts`
 - `frontend/src/app/{dashboard,browse,upload,share,guests,activity,search}/page.tsx`
   (nav link only)
+
+---
+
+## Addendum (commit `9aa2129`): photo-restore collision follow-up for backend commit `6443d87`
+
+Backend revised `POST /api/photos/:id/restore` (specs/trash-system.md FINAL
+DECISION 5, REVISED 2026-07-09) so restoring a single trashed photo whose
+folder is also trashed **no longer cascades** into restoring that whole
+folder — the original description above ("resolved by calling
+`foldersApi.restore` on the photo's own `folderId`... then retrying
+`photosApi.restore`") is now stale/wrong and is superseded by this
+addendum. No backend file touched; 176/176 backend suite unaffected.
+
+**`frontend/src/lib/api.ts`** — `photosApi.restore(photoId, opts?)` now
+accepts `{ onConflict?: "existing" | "new", newName?: string }` and POSTs it
+as the body. This is additive and distinct from `foldersApi.restore`'s
+`"merge" | "rename"` vocabulary, which is untouched — the two endpoints
+resolve genuinely different operations now.
+
+**`frontend/src/app/trash/page.tsx`** — `resolvePhotoCollision()` now calls
+`photosApi.restore(photoId, { onConflict, newName })` directly instead of
+`foldersApi.restore(...)`. `PhotoCollisionState` was reshaped to
+`{ conflictingFolderId, conflictingFolderName, customizingNewName,
+newNameDraft, busy, error }` (no more `photoFolderId`/`renaming`/
+`renameDraft` — those were the folder-restore vocabulary leaking into the
+photo case). A new `PhotoCollisionPanel` component (forked from the shared
+`CollisionPanel`, which remains unchanged and folder-restore-only) renders
+different copy:
+
+- **"Put it in the existing '\<name\>' folder"** → `onConflict: "existing"`
+- **"Create a new folder for it"** → `onConflict: "new"`, no name (backend
+  auto-generates `"<name> (recovered)"`-style)
+- **"Name the new folder myself…"** → reveals a text input, still
+  `onConflict: "new"` but with the caller's `newName`
+
+Copy explicitly says the photo's original trashed folder "is still in the
+trash and won't be restored" — the collision panel's title also dropped the
+"Can't recover" framing (accurate for a folder-restore block, inaccurate
+here since the photo restore isn't blocked, just needs a choice).
+
+On success (either choice, or the plain no-conflict path), the photo is
+removed from the Trash list as before, plus a small auto-dismissing toast
+(`.trash-restore-toast`, 4s) shows which folder it landed in, using the
+`folder.name` already returned by the restore response — no new backend
+field needed.
+
+**Verification:** `npm run typecheck -w frontend` clean, `npm run lint -w
+frontend` clean, `npm run build -w frontend` clean (isolated `distDir` via a
+temporary `next.config.js` swap since `next dev` was live on the shared
+`.next` — restored the original config after, `git diff` on it is empty).
+Did not live-check against a running backend API process this pass (only
+the Docker infra containers — postgres/redis/minio — were up, no backend
+process listening on :4000); relying on the backend's own 176/176 suite for
+the endpoint contract and this addendum's build/typecheck/lint pass plus a
+careful re-read of the new render/state code as the substitute, same
+category of gap as prior passes' un-browser-verified UI work.
