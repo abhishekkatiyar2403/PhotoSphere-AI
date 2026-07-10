@@ -19,6 +19,21 @@ export function createApp() {
   const app = express();
 
   const frontendOrigin = process.env.FRONTEND_ORIGIN ?? "http://localhost:3000";
+  // Additive, dev-only: the mobile-wrapper testing setup (Capacitor's WebView
+  // pointed at this Mac's LAN IP, per frontend/capacitor.config.ts) hits this
+  // API from a DIFFERENT origin (the LAN IP, not localhost) than the browser
+  // dev server does. Rather than swap FRONTEND_ORIGIN and break Mac-browser
+  // testing, accept BOTH origins. Unset (undefined) changes nothing.
+  const mobileDevOrigin = process.env.MOBILE_DEV_ORIGIN;
+  // Additional origins as a comma-separated list — e.g. a Vercel preview
+  // deployment URL alongside the stable production domain. Unset changes
+  // nothing (the two variables above already cover the common cases).
+  const extraOrigins = (process.env.EXTRA_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((o) => o.trim());
+  const allowedOrigins = [frontendOrigin, mobileDevOrigin, ...extraOrigins].filter(
+    (o): o is string => typeof o === "string" && o.length > 0,
+  );
 
   // Security headers (specs/audit-and-polish.md P1, roadmap Week 11). Helmet's
   // safe defaults (X-Content-Type-Options: nosniff, X-Frame-Options: DENY /
@@ -50,7 +65,7 @@ export function createApp() {
 
   app.use(
     cors({
-      origin: frontendOrigin,
+      origin: allowedOrigins,
       credentials: true,
     }),
   );

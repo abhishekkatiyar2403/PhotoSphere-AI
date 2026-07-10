@@ -721,6 +721,7 @@ export default function OrganizePage() {
                   aiConfidence: statusRes.aiConfidence ?? null,
                   duplicateOfPhotoId: statusRes.duplicateOfPhotoId ?? null,
                   dedupMethod: statusRes.dedupMethod ?? null,
+                  reason: statusRes.reason ?? null,
                   reclassifying: false,
                   duplicateOfLabel: null,
                   actionError: null,
@@ -1920,6 +1921,11 @@ function PhotoCard({
           {photo.aiConfidence != null ? ` · ${photo.aiConfidence.toFixed(2)}` : ""}
         </p>
       )}
+      {/* Why this card is sitting here instead of a normal category folder —
+          backend's computeReason (lib/photoCard.ts), null for a normally-
+          filed photo. Shown for every terminal status that has one: failed,
+          duplicate, orphaned-done, and low-confidence/unmapped Uncategorized. */}
+      {photo.reason && <p className="organize-card-reason">{photo.reason}</p>}
 
       {photo.actionError && <p className="organize-new-folder-error">{photo.actionError}</p>}
 

@@ -427,6 +427,14 @@ body {
   color: #9a7d2e;
 }
 
+.organize-card-reason {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--color-muted);
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+
 .organize-card-action {
   display: flex;
   flex-direction: column;

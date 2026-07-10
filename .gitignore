@@ -9,3 +9,22 @@ logs/*.log
 .DS_Store
 reports/screenshots/
 *.tsbuildinfo
+
+# Mobile wrapper (Capacitor) — native project source IS committed (per
+# Capacitor convention); only build output + machine-specific files aren't.
+frontend/android/.certs/
+frontend/android/local.properties
+frontend/android/**/build/
+frontend/android/.gradle/
+frontend/android/captures/
+frontend/android/.idea/
+frontend/ios/App/Pods/
+frontend/ios/App/build/
+frontend/ios/App/App.xcworkspace/xcuserdata/
+frontend/ios/App/App.xcodeproj/xcuserdata/
+frontend/ios/App/App/public/
+
+# Local session tooling + pulled Railway config (may carry credentials)
+.agents/
+.railway/
+.railway-config-pull-*/

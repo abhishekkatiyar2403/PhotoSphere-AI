@@ -121,7 +121,9 @@ export function guestSessionCookieOptions() {
   return {
     httpOnly: true,
     secure: isProd, // Secure requires HTTPS; local Compose dev is plain HTTP (mirrors owner cookie)
-    sameSite: "lax" as const,
+    // Same cross-site reasoning as sessionCookieOptions() — Vercel frontend
+    // + Railway backend are different domains in production.
+    sameSite: (isProd ? "none" : "lax") as "none" | "lax",
     maxAge: TTL_HOURS * 60 * 60 * 1000,
     path: "/",
   };

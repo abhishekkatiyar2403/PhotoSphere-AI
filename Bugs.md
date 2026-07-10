@@ -219,6 +219,83 @@ This was three separate things.
 
 ---
 
+## #11 — iPhone HEIC (Live Photo) uploads failed with a "security limit exceeded" decode error
+
+**Reported:** 2026-07-09/10
+**Abhishek's report:** Screenshot of multiple uploads stuck on *"Status: failed"*, with the network trace showing *"Input buffer has corrupt header: heif: Invalid input: Security limit exceeded: Number of references in iref box (45) exceeds the security limits of 16 references."* — *"check and fix it immediately"*
+
+**The bug:** The worker decodes every image with `sharp`, which bundles libheif — and libheif has a hardcoded anti-DoS cap of 16 item-references inside a HEIC container. iPhone **Live Photos** (the default camera mode) routinely carry 45+ references, so perfectly valid photos straight off the phone failed to decode at all: no thumbnails, no pHash, no classification. Confirmed by reproducing the exact error against the real failing file; not configurable through sharp — a genuine upstream limitation.
+
+**Fix logic:** When sharp can't decode, fall back to macOS's built-in `sips` tool, which uses Apple's own native HEIC decoder (completely independent of libheif). Restructure the pipeline around a single decoded `pixelBuffer` (sharp first, sips fallback) shared by thumbnails, pHash, and classification — and since Rekognition only accepts JPEG/PNG anyway, HEIC always classifies via this converted buffer.
+
+**Fix delivered:** `decodeHeicViaSips()` + `decodeToJpeg()` in `backend/src/worker.ts`; the whole pipeline (thumbnails, pHash, classify, reclassify) now runs off the decoded buffer. Verified directly against the real failing iPhone file. **Disclosed limitation:** the sips fallback is macOS-only — on Linux (Railway production) these specific over-the-limit Live Photos would still fail to decode; open gap, deferred until production deploy resumes.
+**Status:** Fixed locally, verified against the exact reported file.
+
+---
+
+## #12 — Clicking a HEIC photo showed no preview, and "Date taken" was always Unknown
+
+**Reported:** 2026-07-09/10
+**Abhishek's report:** *"when i click on the photo to see but i can't see and also the date taken is also not present fix it"* (screenshot: broken viewer image + "Date Taken: Unknown")
+
+**The bug (two parts):**
+1. The photo viewer pointed its `<img>` at the **original file's** presigned URL — for a HEIC original, no browser except Safari can render that at all, so the viewer showed a broken image even though the pipeline had already generated perfectly good JPEG thumbnails.
+2. EXIF extraction uses `exifr`, which (confirmed by inspecting its latest published build, 7.1.3) has **zero** HEIC container parsing support — so date/camera metadata for every iPhone photo silently came back null.
+
+**Fix logic:** (1) The viewer should prefer the pipeline's own JPEG thumbnails (1200 → 400 → 150) and only fall back to the original URL when no thumbnail exists yet. (2) Add a sips-based EXIF fallback (`sips -g all`) for when exifr finds nothing — recovers date taken + camera make/model from HEIC.
+
+**Fix delivered:** `viewerImageUrl()` in `frontend/src/components/PhotoViewer.tsx`; `extractExifViaSips()` in `backend/src/worker.ts`. **Disclosed limitations:** GPS coordinates aren't recoverable via sips (only date/make/model), and the fallback is macOS-only (same production gap as #11).
+**Status:** Fixed locally, verified live with real iPhone photos.
+
+---
+
+## #13 — Real AI classification dumped temples, animals, and rivers all into one "Nature" folder
+
+**Reported:** 2026-07-10
+**Abhishek's report:** *"where there are only 2 folder and why not categorized... on what basis it mark the photos as duplicate fix all these things"* → then with Rekognition live: *"it classify building (temple), animals and nature (river) photo in one folder which is nature... fix this and classify according to the objects"*
+
+**The bug:** The label→category table was built for the tiny mock vocabulary (a handful of words like `dog`, `landscape`, `outdoor`). Real Rekognition returns 10–15 labels per photo, mixing the actual subject (*Lion*, *Temple*, *Zebra*) with generic scenery labels (*Outdoors*, *Landscape*, *Scenery*) — the subject labels weren't in the table at all, the scenery ones were, and "Nature" also outranked "Animals" in the priority order. Net effect: nearly everything landed in Nature.
+
+**Fix logic:** Teach the table the real Rekognition vocabulary, add a new **Architecture** category for buildings/temples/landmarks, and re-rank the priority order so specific-subject categories (People, Animals, Architecture…) beat the scenery catch-all (Nature, now last).
+
+**Fix delivered:** Expanded `LABEL_TO_CATEGORY` + reordered `CATEGORY_PRIORITY` in `backend/src/lib/classification/categoryMapping.ts`; "Architecture" added to the search-category lists (backend + frontend). Verified live: lion/zebra/deer → Animals, temples → Architecture.
+**Status:** Fixed, verified by Abhishek's own re-test ("now it is working fine") — with a precision follow-up filed as #15.
+
+---
+
+## #14 — Storage counter never went down after permanent delete, and a photo in Trash blocked re-uploading the same photo
+
+**Reported:** 2026-07-10
+**Abhishek's report:** *"if i deleted these photos permanently then why it showed 120 mb used. also i found out that if image is already present in the trash and again i upload the same photo then it considered it as a duplicate... also tell me the limit how many photos i can upload at a time"*
+
+**The bug (two parts + one question):**
+1. **Storage:** `User.storageUsedBytes` is a running counter incremented on every upload — but nothing anywhere ever decremented it. Permanent purge deleted the DB row and the stored file, yet the dashboard number stayed inflated forever.
+2. **Trash-duplicate:** both dedup queries (exact SHA-256 and pHash near-dup, `backend/src/lib/dedup.ts`) matched against *any* prior photo — including one sitting in Trash. So re-uploading a photo whose only copy was trashed got flagged "duplicate" of a photo the user had deliberately thrown away.
+3. **Upload limit (question, not a bug):** the endpoint is one-file-per-request by design; the frontend loops over selected files (3 in parallel). No count limit — only 50MB per individual file.
+
+**Fix delivered:** `purgePhoto()` in `backend/src/lib/purge.ts` now decrements the owner's `storageUsedBytes` by the purged photo's size (clamped at 0, race-safe). Both dedup queries now filter `deletedAt: null`, so trashed photos can never be dedup "originals" — a re-upload of a trashed photo classifies as brand-new. Full backend suite re-run clean (200/200). Note: purges done *before* this fix aren't retroactively reconciled in the counter.
+**Status:** Fixed, verified via automated tests; app restarted with both fixes live.
+
+---
+
+## #15 — Classification precision: incidental "Person" labels hijacked scene photos, one weak label ("Shark") hijacked a river photo — plus face-based People folders
+
+**Reported:** 2026-07-10
+**Abhishek's report:** *"still classification isn't working perfectly i still find some nature photos in people folder and one nature photo in animal folder... fix it immediately also fix the whole classification so it classify according to the photo i upload and also it create different people folders... if multiple people is present in one photo put those photos in group folder"*
+
+**The bug (two mapping flaws left over from #13's first-match-wins design):**
+1. Rekognition tags "Person" on almost any street/beach scene containing an incidental passer-by — and since People sat at priority #1, one generic "Person" label beat a dozen Architecture/Nature labels describing what the photo is actually OF.
+2. All labels counted equally regardless of their own confidence — a hallucinated 50-something-% "Shark" on a river photo (its only Animals label) outranked thirteen high-confidence Nature labels because Animals > Nature in the priority order.
+
+**Fix logic:** Replace first-match-wins with **confidence-weighted dominance scoring**: every mappable label above a 75% per-label confidence floor votes for its category with (its own confidence × its category's weight — scenery/Nature labels count half, since Rekognition attaches them to any outdoor photo). Highest total wins; the fixed priority order only breaks exact ties. A real portrait (Person + Adult + Male + Man = four People votes) still wins; a lone "Person" on a temple photo loses to the building's own labels. Per-label confidences now flow through from Rekognition (`labelConfidences` on `ClassificationResult`).
+
+**Face-based People folders (new capability, same pass):** photos classified People are refined via Rekognition's face APIs (`backend/src/lib/classification/faces.ts`, one face collection per owner): 2+ clear faces → **"Group"** folder; exactly 1 face → matched against previously-seen faces → a stable **"Person N"** folder per real-world person (new people are enrolled automatically); no clear face (e.g. back-of-head) or any face-API failure → plain **"People"** (graceful fallback, never a pipeline failure). Requires 5 extra IAM actions (DetectFaces, CreateCollection, SearchFacesByImage, IndexFaces, ListFaces) — without them everything simply stays in "People".
+
+**Fix delivered:** Rewritten `mapToCategory()` + expanded vocabulary in `categoryMapping.ts`; `labelConfidences` in `lib/classification/index.ts`; new `lib/classification/faces.ts`; worker passes the decoded image into folder assignment for face refinement. All 8 real label sets from Abhishek's screenshots verified mapping to the right category; full backend suite 200/200.
+**Status:** Fixed and built; awaiting Abhishek's manual re-test + the IAM policy additions for the face features.
+
+---
+
 ## Log format for future entries
 
 Each new entry follows this shape:

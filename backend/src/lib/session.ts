@@ -62,7 +62,13 @@ export function sessionCookieOptions() {
   return {
     httpOnly: true,
     secure: isProd, // Secure requires HTTPS; local Compose dev is plain HTTP (spec Open Question 5)
-    sameSite: "lax" as const,
+    // "lax" works for local dev where frontend/backend are both localhost
+    // (different ports still count as same-site). In production the
+    // frontend (Vercel) and backend (Railway) are genuinely different
+    // domains, so the cookie is cross-site — "lax" would silently never be
+    // sent on the fetch() calls this app makes. "none" requires "secure",
+    // which is only true in prod anyway, so this is safe either way.
+    sameSite: (isProd ? "none" : "lax") as "none" | "lax",
     maxAge: TTL_HOURS * 60 * 60 * 1000,
     path: "/",
   };

@@ -10,29 +10,63 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Readable } from "node:stream";
 
 /**
- * Thin wrapper around the AWS S3 SDK v3, pointed at MinIO's endpoint.
- * Per CLAUDE.md ground rules: private bucket only, never a public ACL,
- * never a raw/direct URL returned to a client - every read goes through
- * getPresignedGetUrl() with a short TTL (60s per spec).
+ * Thin wrapper around the AWS S3 SDK v3 — pointed at MinIO locally, real AWS
+ * S3 in production. Per CLAUDE.md ground rules: private bucket only, never a
+ * public ACL, never a raw/direct URL returned to a client - every read goes
+ * through getPresignedGetUrl() with a short TTL (60s per spec).
+ *
+ * Which one is active is decided by whether AWS_S3_BUCKET is set — unset
+ * (the local/Docker-Compose default) keeps every existing MINIO_* variable
+ * and behavior exactly as before; setting it (Railway production) switches
+ * to a real S3 bucket with no other code change needed.
+ *
+ * Running under Vitest ALWAYS forces local MinIO regardless of
+ * AWS_S3_BUCKET — the same shared .env that carries real AWS credentials
+ * for local dev/testing also has AWS_S3_BUCKET set, and the backend test
+ * suite depends on fast, local, zero-network storage (real S3's network
+ * latency blows past several tests' short timeouts, confirmed empirically).
+ * See lib/classification/index.ts for the identical pattern/reasoning.
  */
 
-const BUCKET = process.env.MINIO_BUCKET ?? "photosphere-dev";
-const useSSL = process.env.MINIO_USE_SSL === "true";
+const usingRealS3 = Boolean(process.env.AWS_S3_BUCKET) && !process.env.VITEST;
 
-const s3 = new S3Client({
-  endpoint: `${useSSL ? "https" : "http"}://${process.env.MINIO_ENDPOINT ?? "localhost"}:${
-    process.env.MINIO_PORT ?? "9000"
-  }`,
-  region: "us-east-1", // MinIO ignores region but the SDK requires one
-  credentials: {
-    accessKeyId: process.env.MINIO_ACCESS_KEY ?? "photosphere",
-    secretAccessKey: process.env.MINIO_SECRET_KEY ?? "photosphere123",
-  },
-  forcePathStyle: true, // required for MinIO (virtual-hosted-style buckets don't work locally)
-});
+const BUCKET = usingRealS3 ? process.env.AWS_S3_BUCKET! : process.env.MINIO_BUCKET ?? "photosphere-dev";
 
-/** Idempotent bootstrap - creates the private bucket if it doesn't already exist. Run once at API/worker startup. */
+const s3 = usingRealS3
+  ? new S3Client({
+      region: process.env.AWS_REGION ?? "us-east-1",
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+      },
+      // No custom endpoint / forcePathStyle for real AWS — the SDK's default
+      // virtual-hosted-style addressing against the real service is correct.
+    })
+  : new S3Client({
+      endpoint: `${process.env.MINIO_USE_SSL === "true" ? "https" : "http"}://${
+        process.env.MINIO_ENDPOINT ?? "localhost"
+      }:${process.env.MINIO_PORT ?? "9000"}`,
+      region: "us-east-1", // MinIO ignores region but the SDK requires one
+      credentials: {
+        accessKeyId: process.env.MINIO_ACCESS_KEY ?? "photosphere",
+        secretAccessKey: process.env.MINIO_SECRET_KEY ?? "photosphere123",
+      },
+      forcePathStyle: true, // required for MinIO (virtual-hosted-style buckets don't work locally)
+    });
+
+/**
+ * Idempotent bootstrap - creates the private bucket if it doesn't already
+ * exist. Run once at API/worker startup. Auto-create only applies to local
+ * MinIO — a real AWS bucket is expected to already exist (created deliberately
+ * in the AWS console, with its own region/lifecycle/versioning choices), so
+ * this just verifies it's reachable and throws loudly if not, rather than
+ * silently trying to provision infrastructure on every prod boot.
+ */
 export async function ensureBucketExists(): Promise<void> {
+  if (usingRealS3) {
+    await s3.send(new HeadBucketCommand({ Bucket: BUCKET })); // throws if missing/unreachable — fail loudly
+    return;
+  }
   try {
     await s3.send(new HeadBucketCommand({ Bucket: BUCKET }));
   } catch {

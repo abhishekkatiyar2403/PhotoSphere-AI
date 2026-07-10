@@ -6,16 +6,23 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getExposedOtp, sendOwnerOtp, wasOtpDelivered } from "../lib/notifications";
 
-// Offline verification for specs/guest-access-otp.md's [Developer-verified]
-// ground-rule AC: "no real email/SMS/cloud provider ... the notification
-// module is a one-file mock". Mirrors classification.offline.test.ts exactly:
+// Offline verification for the notification module's MOCK path — the
+// default, unconfigured behavior (no RESEND_API_KEY set) must still be 100%
+// network-free, exactly as it always was. A real Resend-backed provider was
+// added deliberately (Abhishek's explicit go-ahead, for a production deploy)
+// and activates ONLY when RESEND_API_KEY + RESEND_FROM_EMAIL are both set —
+// so this file no longer bans `fetch` from the module outright (that would
+// now be a false failure); instead it proves the MOCK class itself still
+// never touches the network, and that JWT/network SDKs are still absent.
 //
 // 1. Runtime: every Node network entry point reachable from userland is
-//    stubbed to THROW while the mock provider "sends" an OTP — a single
-//    outbound attempt anywhere in the notification path would fail this test.
-// 2. Static: the notifications module is asserted to import NO network-capable
-//    module and NO real-delivery SDK (twilio/sendgrid/ses/resend/nodemailer)
-//    and NO JWT library.
+//    stubbed to THROW while the mock provider "sends" an OTP (with
+//    RESEND_API_KEY unset in this test env, so the mock is guaranteed to be
+//    the active provider) — a single outbound attempt anywhere in that path
+//    would fail this test.
+// 2. Static: the MockNotificationProvider class body specifically (not the
+//    whole file, which now legitimately has a gated real-provider class) is
+//    asserted to contain no network call.
 //
 // This file needs no DB/MinIO/worker — it runs everywhere.
 
@@ -54,15 +61,24 @@ describe("mock notification provider works fully offline (no network, no real de
     expect(getExposedOtp(requestId)).toBe("654321");
   });
 
-  it("notification module dependency graph contains no network/real-delivery/JWT import (static check)", () => {
+  it("notification module imports no JWT library, and the MOCK provider class body makes no network call (static check)", () => {
     const source = fs.readFileSync(
       path.resolve(__dirname, "../lib/notifications/index.ts"),
       "utf8",
     );
+    // Still fully banned everywhere in the file: JWT libraries (never used
+    // for sessions in this app) and lower-level network/SDK imports that
+    // would indicate something OTHER than the deliberate, gated Resend HTTP
+    // call is reaching for the network.
     const forbidden =
       /(?:from\s+|require\()\s*["'](?:node:)?(?:http|https|net|tls|dns|dgram|undici|axios|node-fetch|twilio|@sendgrid\/[^"']+|@aws-sdk\/client-ses|resend|nodemailer|jsonwebtoken|jose)["']/;
     expect(source).not.toMatch(forbidden);
-    expect(source).not.toContain("fetch(");
+
+    // The MOCK class specifically (extracted by its own body) must remain
+    // network-free — this is the class actually active by default.
+    const mockClassMatch = source.match(/class MockNotificationProvider[\s\S]*?\n}/);
+    expect(mockClassMatch).not.toBeNull();
+    expect(mockClassMatch![0]).not.toContain("fetch(");
   });
 
   it("otp helper module imports nothing network-capable (static check)", () => {

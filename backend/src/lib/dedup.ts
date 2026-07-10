@@ -62,6 +62,7 @@ export async function findExactDuplicateOriginal(
       ownerId: photo.ownerId, // per-user scope only (upload-pipeline spec Open Question 7)
       fileSha256,
       duplicateOfPhotoId: null,
+      deletedAt: null, // bug fix: a copy sitting in Trash must not block a fresh re-upload
       OR: strictlyOlderThan(photo),
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }], // oldest non-duplicate = canonical original
@@ -89,6 +90,7 @@ export async function findNearDuplicateOriginal(
       ownerId: photo.ownerId,
       phash: { not: null },
       duplicateOfPhotoId: null,
+      deletedAt: null, // bug fix: a copy sitting in Trash must not block a fresh re-upload
       OR: strictlyOlderThan(photo), // also excludes self: nothing is strictly older than itself
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }], // oldest match wins, deterministically

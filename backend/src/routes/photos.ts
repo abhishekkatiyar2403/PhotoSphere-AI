@@ -24,7 +24,7 @@ import {
 import { requireAuth } from "../middleware/requireAuth";
 import { reclassifyRateLimiter } from "../middleware/reclassifyRateLimiter";
 import { uploadRateLimiter } from "../middleware/uploadRateLimiter";
-import { PHOTO_CARD_SELECT, toPhotoCard } from "../lib/photoCard";
+import { PHOTO_CARD_SELECT, toPhotoCard, computeReason } from "../lib/photoCard";
 import { computePurgeAt, findLiveFolderByName, generateNonCollidingRecoveredName } from "./folders";
 import { preflightDownloadByIds } from "../lib/folderDownload";
 import { streamFolderZip } from "../lib/folderZip";
@@ -260,7 +260,12 @@ router.get(
   asyncHandler(async (req, res) => {
     const photo = await prisma.photo.findUnique({
       where: { id: req.params.id },
-      include: { folder: { select: { id: true, name: true, deletedAt: true } } },
+      include: {
+        folder: { select: { id: true, name: true, deletedAt: true } },
+        // Only need the most recent attempt's error message, for the
+        // "why is this Unfiled?" reason field below.
+        jobs: { orderBy: { createdAt: "desc" }, take: 1, select: { errorMessage: true } },
+      },
     });
 
     // 404, not 403, on ownership mismatch - never confirm existence to a
@@ -318,6 +323,9 @@ router.get(
       },
       folder: photo.folder ? { id: photo.folder.id, name: photo.folder.name } : null,
       collectionId: photo.collectionId,
+      // Explains why this photo is sitting in Unfiled or "Uncategorized"
+      // instead of a normal category folder — null for a normally-filed photo.
+      reason: computeReason(photo),
     });
   }),
 );
@@ -367,6 +375,7 @@ router.get(
             errorMessage: latestJob.errorMessage,
           }
         : null,
+      reason: computeReason(photo),
     });
   }),
 );

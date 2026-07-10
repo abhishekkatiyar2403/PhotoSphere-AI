@@ -148,10 +148,14 @@ export type PhotoRestoreInput = z.infer<typeof photoRestoreSchema>;
 // DEFERRED (labels aren't in a queryable per-photo column this pass).
 export const SEARCH_CATEGORIES = [
   "People",
-  "Nature",
   "Animals",
+  "Architecture",
+  "Nature",
   "Food",
   "Vehicles",
+  "Electronics",
+  "Kitchen",
+  "Furniture",
   "Documents",
   "Screenshots",
   "Uncategorized",

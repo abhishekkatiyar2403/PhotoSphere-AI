@@ -62,6 +62,22 @@ export async function purgePhoto(
     throw err;
   }
 
+  // Release the purged photo's bytes from the owner's storage quota. This was
+  // the missing half of the size accounting: photos.ts increments
+  // storageUsedBytes on upload, but nothing ever decremented it again, so a
+  // permanently-deleted photo's bytes stayed counted forever (bug report:
+  // dashboard "storage used" didn't drop after purging from Trash). Clamp at
+  // 0 defensively — never let a race/replay drive the counter negative.
+  const sizeBytes = BigInt(photo.sizeBytes);
+  await prisma.user.updateMany({
+    where: { id: photo.ownerId, storageUsedBytes: { gte: sizeBytes } },
+    data: { storageUsedBytes: { decrement: sizeBytes } },
+  });
+  await prisma.user.updateMany({
+    where: { id: photo.ownerId, storageUsedBytes: { lt: sizeBytes } },
+    data: { storageUsedBytes: 0 },
+  });
+
   // Best-effort MinIO cleanup AFTER the DB row is gone (same DB-wins ordering
   // as photo-deletion.md's PD1: correctness of DB state wins, storage cleanup
   // is best-effort after and never resurrects the row on failure).

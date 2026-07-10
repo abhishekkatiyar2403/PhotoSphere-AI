@@ -1,19 +1,19 @@
 /**
  * Swappable notification interface (specs/guest-access-otp.md §4, Hard
- * constraint 1). Exactly mirrors the classification module's one-file-swap
- * pattern (lib/classification/index.ts): callers depend only on this module's
- * `sendOwnerOtp()` export, never a concrete provider, so wiring in a real
- * email/SMS provider later is a one-file change here and nothing else.
+ * constraint 1). Callers depend only on this module's `sendOwnerOtp()`
+ * export, never a concrete provider.
  *
- * NO real network call happens here, EVER — no Twilio / SendGrid / SES /
- * Resend, no cloud credentials, no JWT — until Abhishek explicitly wires in a
- * real provider (CLAUDE.md ground rule). The OTP goes to the OWNER, who
- * approves; the guest never types it (roadmap §12 Layer 5).
+ * Two providers: the original in-memory mock (default — no real network
+ * call, ever, unless explicitly configured), and a real Resend-backed one,
+ * used ONLY when RESEND_API_KEY is set (production deploy, explicitly
+ * configured by Abhishek — see .env.example / Railway env vars). Nothing
+ * else in the app needs to know which is active.
  *
  * The mock records the last delivery per requestId in an in-memory map and
  * exposes the plaintext code ONLY under NOTIFICATIONS_EXPOSE_OTP === "true"
  * or NODE_ENV === "test", so the Tester Agent can complete the flow
- * end-to-end. In any other mode the plaintext is never returned or logged.
+ * end-to-end. getExposedOtp() always returns null when the real provider is
+ * active — there's nothing to expose once mail is actually being sent.
  */
 
 export interface OwnerOtpMessage {
@@ -76,22 +76,74 @@ class MockNotificationProvider implements NotificationProvider {
   }
 }
 
-const provider = new MockNotificationProvider();
+/**
+ * Real email delivery via Resend's HTTP API (https://resend.com) — plain
+ * `fetch`, no SDK dependency added, since it's a single simple POST. Active
+ * only when RESEND_API_KEY is set. `RESEND_FROM_EMAIL` must be an address on
+ * a domain verified in the Resend dashboard (Resend's shared sandbox sender
+ * only delivers to the account owner's own inbox — fine for solo testing,
+ * not for real guests/owners).
+ */
+class ResendNotificationProvider implements NotificationProvider {
+  private readonly apiKey: string;
+  private readonly fromEmail: string;
+
+  constructor(apiKey: string, fromEmail: string) {
+    this.apiKey = apiKey;
+    this.fromEmail = fromEmail;
+  }
+
+  async sendOwnerOtp(message: OwnerOtpMessage): Promise<void> {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: this.fromEmail,
+        to: message.ownerEmail,
+        subject: `PhotoSphere AI — approve ${message.guestEmail}'s access request`,
+        text: `${message.guestEmail} is requesting access to folders you shared with them.\n\nApproval code: ${message.code}\n(expires in 5 minutes)\n\nEnter this code on your Guests page to approve, or ignore this email to leave the request pending until it expires.`,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      // eslint-disable-next-line no-console
+      console.error(`[notifications:resend] send failed (${res.status}) for request ${message.requestId}: ${body}`);
+      throw new Error(`Resend send failed with status ${res.status}`);
+    }
+  }
+}
+
+// Running under Vitest ALWAYS forces the mock, regardless of RESEND_API_KEY
+// — the shared .env that carries real Resend credentials for local dev also
+// gets loaded by the test suite, and the OTP flow tests depend on
+// deterministic, zero-cost, zero-network delivery (plus getExposedOtp(),
+// which only ever works against the mock). Same pattern/reasoning as
+// lib/classification/index.ts and lib/storage.ts.
+const provider: NotificationProvider =
+  process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL && !process.env.VITEST
+    ? new ResendNotificationProvider(process.env.RESEND_API_KEY, process.env.RESEND_FROM_EMAIL)
+    : new MockNotificationProvider();
 
 export async function sendOwnerOtp(message: OwnerOtpMessage): Promise<void> {
   return provider.sendOwnerOtp(message);
 }
 
 /**
- * Test/dev-only accessor for the plaintext OTP (gated on the exposure flag).
- * Returns null in dev/prod so a stray call can never leak a live code. Used
- * by GET /api/invites/requests/:requestId/otp (test-only surface) so Tester
- * can read the code without DB access. NOT wired for real users.
+ * Test/dev-only accessor for the plaintext OTP (gated on the exposure flag,
+ * AND only ever populated by the mock provider — always null when Resend is
+ * active). Used by GET /api/invites/requests/:requestId/otp (test-only
+ * surface) so Tester can read the code without DB access. NOT wired for real
+ * users.
  */
 export function getExposedOtp(requestId: string): string | null {
+  if (!(provider instanceof MockNotificationProvider)) return null;
   return provider.getExposedOtp(requestId);
 }
 
 export function wasOtpDelivered(requestId: string): boolean {
+  if (!(provider instanceof MockNotificationProvider)) return true; // Resend already threw on failure above
   return provider.wasDelivered(requestId);
 }

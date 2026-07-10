@@ -5,13 +5,19 @@ import path from "node:path";
 // separate process/entrypoint from the API, so it needs its own env load.
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import crypto from "node:crypto";
+import { promisify } from "node:util";
 import exifr from "exifr";
 import IORedis from "ioredis";
 import { Job, Worker } from "bullmq";
 import sharp from "sharp";
 import { Prisma, type Collection, type Folder, type Photo } from "@prisma/client";
 import { classify, type ClassificationResult } from "./lib/classification";
-import { mapToCategory } from "./lib/classification/categoryMapping";
+import { rankCategories, UNCATEGORIZED } from "./lib/classification/categoryMapping";
+import { refinePeopleFolder, PEOPLE_FALLBACK_FOLDER } from "./lib/classification/faces";
 import { findExactDuplicateOriginal, findNearDuplicateOriginal } from "./lib/dedup";
 import { computePHash } from "./lib/phash";
 import { prisma } from "./lib/prisma";
@@ -27,6 +33,126 @@ import { ensureBucketExists, getPresignedGetUrl, putObject } from "./lib/storage
 import { thumbnailKey } from "./routes/photos";
 
 const THUMBNAIL_SIZES = [150, 400, 1200] as const;
+
+// Formats Amazon Rekognition's DetectLabels accepts directly — everything
+// else (HEIC first and foremost) needs converting via decodeToJpeg() first.
+const REKOGNITION_COMPATIBLE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Fallback decoder for HEIC files sharp/libheif can't touch at all — iPhone
+ * ships with Live Photo mode ON BY DEFAULT, and a Live Photo HEIC embeds
+ * enough auxiliary item references (extra thumbnails, a still-frame
+ * sequence) that it routinely exceeds libheif's hardcoded anti-DoS security
+ * limit of 16 "iref" references (real files seen during testing: 45-48).
+ * That limit is compiled into libheif itself — sharp exposes no way to
+ * raise it, so a meaningful fraction of ordinary iPhone photos are
+ * genuinely undecodable by sharp, not just a rare edge case.
+ *
+ * `sips` (macOS's built-in image tool) uses Apple's OWN native HEIC decoder,
+ * completely independent of libheif, and handles Apple's own Live Photo
+ * format natively without issue. This is a real, working fallback FOR LOCAL
+ * MAC DEVELOPMENT ONLY — `sips` doesn't exist on Linux, so this path is
+ * inert (and harmless — decodeToJpeg() just falls through to the graceful-
+ * degradation case below) on Railway/production. There is currently no
+ * equivalent fallback for Linux; if this matters in production, the honest
+ * options are a real HEIF-capable conversion service/library on that
+ * platform, or accepting that some Live Photo HEICs land in Uncategorized
+ * with no thumbnail there until one is wired in — flagged here rather than
+ * silently assumed away.
+ */
+async function decodeHeicViaSips(buffer: Buffer): Promise<Buffer | null> {
+  if (process.platform !== "darwin") return null;
+
+  const tmpDir = os.tmpdir();
+  const id = crypto.randomUUID();
+  const srcPath = path.join(tmpDir, `heic-decode-${id}.heic`);
+  const destPath = path.join(tmpDir, `heic-decode-${id}.jpg`);
+
+  try {
+    await fs.writeFile(srcPath, buffer);
+    await execFileAsync("sips", ["-s", "format", "jpeg", srcPath, "--out", destPath]);
+    return await fs.readFile(destPath);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[worker] sips fallback also failed to decode HEIC:", err);
+    return null;
+  } finally {
+    await fs.unlink(srcPath).catch(() => {});
+    await fs.unlink(destPath).catch(() => {});
+  }
+}
+
+/**
+ * Best-effort decode of `buffer` into a normalized JPEG, for every step that
+ * needs actual re-encoded pixel data from a non-JPEG/PNG original (i.e.
+ * HEIC) — classification (Rekognition only accepts JPEG/PNG), thumbnailing,
+ * and pHash all share this ONE decode attempt rather than each separately
+ * trying and failing against the same undecodable bytes. Tries sharp first
+ * (fast, works for the majority of HEIC files); falls back to sips on
+ * macOS for the Live-Photo case sharp/libheif can't handle at all (see
+ * decodeHeicViaSips). Returns null (never throws) if nothing can decode it,
+ * so every caller degrades gracefully instead of failing the whole pipeline.
+ */
+async function decodeToJpeg(buffer: Buffer): Promise<Buffer | null> {
+  try {
+    return await sharp(buffer).rotate().jpeg({ quality: 90 }).toBuffer();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[worker] sharp could not decode image, trying sips fallback:", err);
+    return decodeHeicViaSips(buffer);
+  }
+}
+
+/**
+ * macOS-only EXIF fallback for HEIC — confirmed directly against a real
+ * photo that exifr (7.1.3, the latest release) has no HEIC/ISOBMFF
+ * container parser at all and throws "Unknown file format" on every HEIC
+ * file, not just the undecodable-by-libheif ones. `sips -g all` reads
+ * Apple's own metadata parser and reliably exposes creation date + camera
+ * make/model for real iPhone photos. Its plain-text output doesn't expose
+ * GPS coordinates, so that's a genuine, disclosed gap here — this fallback
+ * only ever recovers date/camera, never location, for a HEIC file.
+ */
+async function extractExifViaSips(
+  buffer: Buffer,
+): Promise<{ takenAt: Date | null; cameraMake: string | null; cameraModel: string | null } | null> {
+  if (process.platform !== "darwin") return null;
+
+  const tmpDir = os.tmpdir();
+  const id = crypto.randomUUID();
+  const srcPath = path.join(tmpDir, `heic-exif-${id}.heic`);
+
+  try {
+    await fs.writeFile(srcPath, buffer);
+    const { stdout } = await execFileAsync("sips", ["-g", "all", srcPath]);
+
+    // sips prints "key: value" lines (see decodeHeicViaSips's sibling — this
+    // is the SAME tool, a different flag). Date comes as EXIF-style
+    // "YYYY:MM:DD HH:MM:SS" (colons in the date portion), not ISO — convert
+    // just the date separators so `new Date(...)` parses it correctly.
+    const creationMatch = stdout.match(/^\s*creation:\s*(\d{4}):(\d{2}):(\d{2})\s+(\d{2}:\d{2}:\d{2})/m);
+    const makeMatch = stdout.match(/^\s*make:\s*(.+)$/m);
+    const modelMatch = stdout.match(/^\s*model:\s*(.+)$/m);
+
+    const takenAt = creationMatch
+      ? new Date(`${creationMatch[1]}-${creationMatch[2]}-${creationMatch[3]}T${creationMatch[4]}`)
+      : null;
+
+    return {
+      takenAt: takenAt && !Number.isNaN(takenAt.getTime()) ? takenAt : null,
+      cameraMake: makeMatch ? makeMatch[1].trim() : null,
+      cameraModel: modelMatch ? modelMatch[1].trim() : null,
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[worker] sips EXIF fallback failed:", err);
+    return null;
+  } finally {
+    await fs.unlink(srcPath).catch(() => {});
+  }
+}
 
 // Test-only hooks (specs/ai-classification.md §4 "Hook scoping, explicit"):
 // - FORCE_FAIL_ applies ONLY to the initial "pipeline" job type, so Tester
@@ -152,9 +278,32 @@ async function findOrCreateFolder(collectionId: string, name: string): Promise<F
 async function assignPhotoToFolder(
   photo: Photo,
   result: ClassificationResult,
-  options: { clearDuplicateVerdict: boolean },
+  options: { clearDuplicateVerdict: boolean; pixelBuffer?: Buffer | null },
 ): Promise<void> {
-  const category = mapToCategory(result);
+  const ranked = rankCategories(result);
+  let rankIndex = 0;
+  let category = ranked[0]?.category ?? UNCATEGORIZED;
+
+  // Face-based People refinement (lib/classification/faces.ts): a People
+  // verdict fans out into "Person N" / "Group" / plain "People" folders by
+  // actually looking at the faces' SIZE in frame, not just the labels.
+  // refinePeopleFolder returns null when faces exist but none are prominent
+  // (an incidental passer-by in a street/building photo, 2026-07-10 bug) —
+  // that means "this isn't really a People photo," so fall through to the
+  // next-highest-scoring category the labels matched (e.g. Architecture)
+  // instead of defaulting into a People variant. Strictly best-effort
+  // otherwise — the no-op provider (mock mode / tests) and every face-API
+  // failure path return "People" unchanged, i.e. the pre-feature behavior.
+  while (category === PEOPLE_FALLBACK_FOLDER && options.pixelBuffer) {
+    const refined = await refinePeopleFolder(photo.ownerId, options.pixelBuffer);
+    if (refined !== null) {
+      category = refined;
+      break;
+    }
+    rankIndex += 1;
+    category = ranked[rankIndex]?.category ?? UNCATEGORIZED;
+  }
+
   const collection = await findOrCreateDefaultCollection(photo.ownerId);
   const folder = await findOrCreateFolder(collection.id, category);
 
@@ -230,21 +379,48 @@ async function processPhotoPipeline(photoId: string): Promise<void> {
 
   const originalBuffer = await fetchOriginalBuffer(photo.s3Key);
 
-  // --- Step 1: thumbnails (Sharp), in strict order before anything else. ---
-  for (const size of THUMBNAIL_SIZES) {
-    const thumbBuffer = await sharp(originalBuffer)
-      .rotate() // normalize EXIF orientation before resizing
-      .resize(size, size, { fit: "inside", withoutEnlargement: true })
-      .jpeg({ quality: 82 })
-      .toBuffer();
+  // Decode ONCE, shared by thumbnailing, pHash, and classification below —
+  // rather than each independently attempting (and separately failing) the
+  // same raw HEIC decode. An already-JPEG/PNG original is used as-is
+  // (matches every existing behavior/test exactly, no re-encode/quality
+  // loss). A HEIC (or any other non-JPEG/PNG) original goes through
+  // decodeToJpeg() — sharp first, then sips as a macOS-only fallback for
+  // the Live-Photo case sharp/libheif can't handle at all (see
+  // decodeHeicViaSips's comment for why this is common on real iPhone
+  // photos, not a rare edge case). `null` means genuinely undecodable by
+  // anything available — every step below degrades gracefully rather than
+  // failing the whole pipeline, since a retry against the same bytes could
+  // never succeed differently.
+  const pixelBuffer = REKOGNITION_COMPATIBLE_MIME_TYPES.has(photo.mimeType)
+    ? originalBuffer
+    : await decodeToJpeg(originalBuffer);
 
-    await putObject(thumbnailKey(photo.ownerId, photo.id, size), thumbBuffer, "image/jpeg");
+  // --- Step 1: thumbnails (Sharp), in strict order before anything else. ---
+  let thumbnailsGenerated = false;
+  if (pixelBuffer) {
+    try {
+      for (const size of THUMBNAIL_SIZES) {
+        const thumbBuffer = await sharp(pixelBuffer)
+          .rotate() // normalize EXIF orientation before resizing
+          .resize(size, size, { fit: "inside", withoutEnlargement: true })
+          .jpeg({ quality: 82 })
+          .toBuffer();
+
+        await putObject(thumbnailKey(photo.ownerId, photo.id, size), thumbBuffer, "image/jpeg");
+      }
+      thumbnailsGenerated = true;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[worker] thumbnail generation failed for photo ${photoId} (continuing without one):`, err);
+    }
   }
 
-  await prisma.photo.update({
-    where: { id: photoId },
-    data: { s3ThumbnailKey: thumbnailKey(photo.ownerId, photo.id, 400) },
-  });
+  if (thumbnailsGenerated) {
+    await prisma.photo.update({
+      where: { id: photoId },
+      data: { s3ThumbnailKey: thumbnailKey(photo.ownerId, photo.id, 400) },
+    });
+  }
 
   // --- Step 2: EXIF extraction (exifr). Null (not an error) when absent. ---
   let exifTakenAt: Date | null = null;
@@ -263,7 +439,26 @@ async function processPhotoPipeline(photoId: string): Promise<void> {
       exifCameraModel = exifData.Model ?? null;
     }
   } catch {
-    // Corrupt/absent EXIF segment - treat as "no EXIF data", not a pipeline failure.
+    // exifr (as installed, 7.1.3) genuinely has no HEIC/ISOBMFF container
+    // parser at all — confirmed directly against a real photo: it throws
+    // "Unknown file format" on every HEIC file, not just problematic ones.
+    // Fall through to the sips fallback below rather than just swallowing
+    // this as "no EXIF data" for every iPhone photo.
+  }
+
+  // macOS-only fallback (see decodeHeicViaSips's comment for the same
+  // cross-platform caveat) — only attempted when exifr found nothing, so an
+  // already-successful exifr parse (JPEG/PNG, or a HEIC library that later
+  // gains real support) is never overridden. GPS isn't exposed by `sips -g
+  // all`'s plain-text output, so that stays null here — a real, disclosed
+  // gap, not silently pretended away.
+  if (exifTakenAt === null && process.platform === "darwin") {
+    const sipsExif = await extractExifViaSips(originalBuffer);
+    if (sipsExif) {
+      exifTakenAt = sipsExif.takenAt;
+      exifCameraMake = sipsExif.cameraMake;
+      exifCameraModel = sipsExif.cameraModel;
+    }
   }
 
   await prisma.photo.update({
@@ -297,11 +492,21 @@ async function processPhotoPipeline(photoId: string): Promise<void> {
   // Phase 2 - near-dup pass (pHash), only when the exact pass found
   // nothing (also skips the pHash computation entirely for exact dups).
   // Degenerate flat-image guard lives inside findNearDuplicateOriginal.
+  // Uses the same shared pixelBuffer as thumbnailing — null means
+  // undecodable (see above), so near-dup detection is skipped for this
+  // photo rather than failing the pipeline; the exact-bytes (sha256) pass
+  // above is unaffected either way.
   let phash: string | null = null;
-  if (!duplicateOfPhotoId) {
-    phash = await computePHash(originalBuffer);
-    duplicateOfPhotoId = await findNearDuplicateOriginal(photo, phash);
-    if (duplicateOfPhotoId) dedupMethod = "phash";
+  if (!duplicateOfPhotoId && pixelBuffer) {
+    try {
+      phash = await computePHash(pixelBuffer);
+      duplicateOfPhotoId = await findNearDuplicateOriginal(photo, phash);
+      if (duplicateOfPhotoId) dedupMethod = "phash";
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[worker] pHash computation failed for photo ${photoId} (skipping near-dup check):`, err);
+      phash = null;
+    }
   }
 
   if (duplicateOfPhotoId) {
@@ -327,11 +532,20 @@ async function processPhotoPipeline(photoId: string): Promise<void> {
 
   await prisma.photo.update({ where: { id: photoId }, data: { phash } });
 
-  // --- Step 4: mocked classification (only reached for non-duplicates). ---
-  const result = applyLowConfidenceHook(photo, await classify(originalBuffer));
+  // --- Step 4: classification (only reached for non-duplicates). ---
+  // Reuses the same shared pixelBuffer decoded above — Rekognition only
+  // accepts JPEG/PNG, so a HEIC original could never classify against its
+  // raw bytes even when sharp/sips CAN decode it, and a genuinely
+  // undecodable one (null) lands in Uncategorized (empty labels, 0
+  // confidence) same as any other low-confidence/unmappable result, rather
+  // than a dead-end "failed" status a retry could never fix.
+  const rawResult: ClassificationResult = pixelBuffer
+    ? await classify(pixelBuffer)
+    : { labels: [], confidence: 0 };
+  const result = applyLowConfidenceHook(photo, rawResult);
 
   // --- Step 5: category mapping + folder auto-creation + assignment. ---
-  await assignPhotoToFolder(photo, result, { clearDuplicateVerdict: false });
+  await assignPhotoToFolder(photo, result, { clearDuplicateVerdict: false, pixelBuffer });
 }
 
 /**
@@ -356,10 +570,21 @@ async function processReclassify(photoId: string): Promise<void> {
 
   const originalBuffer = await fetchOriginalBuffer(photo.s3Key);
 
-  const result = applyLowConfidenceHook(photo, await classify(originalBuffer));
+  // Same reasoning as processPhotoPipeline's Step 4 — Rekognition only
+  // accepts JPEG/PNG, so a HEIC original needs converting first, and a
+  // genuinely undecodable one falls back to Uncategorized rather than
+  // failing the reclassify attempt outright.
+  const pixelBuffer = REKOGNITION_COMPATIBLE_MIME_TYPES.has(photo.mimeType)
+    ? originalBuffer
+    : await decodeToJpeg(originalBuffer);
+  const rawResult: ClassificationResult = pixelBuffer
+    ? await classify(pixelBuffer)
+    : { labels: [], confidence: 0 };
+  const result = applyLowConfidenceHook(photo, rawResult);
 
   await assignPhotoToFolder(photo, result, {
     clearDuplicateVerdict: photo.duplicateOfPhotoId !== null || photo.dedupMethod !== null,
+    pixelBuffer,
   });
 }
 

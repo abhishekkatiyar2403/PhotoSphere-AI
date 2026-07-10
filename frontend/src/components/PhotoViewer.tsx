@@ -130,7 +130,7 @@ export function PhotoViewer({
             // eslint-disable-next-line @next/next/no-img-element
             <img
               className="viewer-image"
-              src={detail.original.url}
+              src={viewerImageUrl(detail)}
               alt={detail.originalFilename}
               data-testid="viewer-image"
             />
@@ -168,6 +168,17 @@ export function PhotoViewer({
             </p>
           )}
 
+          {/* Why this photo is here instead of a normal category folder —
+              backend's computeReason (lib/photoCard.ts); null for a
+              normally-filed photo, so this covers Unfiled AND a low-
+              confidence/unmapped "Uncategorized" folder alike. */}
+          {detail?.reason && (
+            <p className="viewer-info-row viewer-info-reason">
+              <span className="label">Why</span>
+              <span>{detail.reason}</span>
+            </p>
+          )}
+
           <p className="viewer-info-row">
             <span className="label">Date taken</span>
             <span>{formatTakenAt(detail?.exif.takenAt)}</span>
@@ -192,6 +203,18 @@ export function PhotoViewer({
       </div>
     </div>
   );
+}
+
+// Prefer the largest generated thumbnail (always a plain JPEG, produced by
+// the worker's own pipeline) over the raw original file's URL — most
+// browsers (everything except Safari) simply cannot render HEIC in an <img>
+// at all, so a HEIC original's presigned URL shows as a broken image no
+// matter how valid the file is. Only fall back to the original when no
+// thumbnail exists yet (e.g. still processing, or a genuinely undecodable
+// HEIC where thumbnailing itself had to skip — that original will still
+// fail to render in most browsers, but there's nothing better to show).
+function viewerImageUrl(detail: PhotoDetail): string {
+  return detail.thumbnails["1200"] ?? detail.thumbnails["400"] ?? detail.thumbnails["150"] ?? detail.original.url;
 }
 
 function formatTakenAt(takenAt: string | null | undefined): string {

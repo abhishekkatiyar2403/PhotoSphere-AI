@@ -135,6 +135,11 @@ export type PhotoDetail = {
   };
   folder: { id: string; name: string } | null;
   collectionId: string | null;
+  // Additive (backend change, see lib/photoCard.ts's computeReason) - a
+  // human-readable explanation for why this photo is sitting in Unfiled or
+  // an "Uncategorized" folder instead of a normal category folder. null for
+  // a normally-filed photo.
+  reason: string | null;
 };
 
 // Trash system (specs/trash-system.md). Single photo soft-delete returns
@@ -409,6 +414,11 @@ export type FolderPhoto = {
   // toPhotoCard) - only meaningful when status === "duplicate".
   duplicateOfPhotoId: string | null;
   dedupMethod: "sha256" | "phash" | null;
+  // Additive (backend change, see lib/photoCard.ts's computeReason) - a
+  // human-readable explanation for why this card is sitting in Unfiled or
+  // an "Uncategorized" folder instead of a normal category folder. null for
+  // a normally-filed photo.
+  reason: string | null;
   thumbnailUrl: string | null;
 };
 
@@ -721,10 +731,14 @@ export const auditApi = {
 // in lockstep. "unfiled" is a folderId literal, not a category.
 export const SEARCH_CATEGORIES = [
   "People",
-  "Nature",
   "Animals",
+  "Architecture",
+  "Nature",
   "Food",
   "Vehicles",
+  "Electronics",
+  "Kitchen",
+  "Furniture",
   "Documents",
   "Screenshots",
   "Uncategorized",
