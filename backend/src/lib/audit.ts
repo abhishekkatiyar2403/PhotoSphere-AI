@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { logger } from "./logger";
 
 /**
  * The ONLY writer to `audit_log` (specs/audit-and-polish.md §A3, roadmap §12
@@ -78,11 +79,21 @@ export type AuditAction =
   | "folder_restored"
   | "photo_permanently_deleted"
   | "folder_permanently_deleted"
-  | "trash_emptied";
+  | "trash_emptied"
+  // 2026-07-13 backend audit #4: account deletion. Written BEFORE the User
+  // row is deleted (see routes/auth.ts) — AuditLog has no FK relation to
+  // User at all (plain string columns, no @relation), so this row survives
+  // the account's own deletion, an intentional, immutable record that it
+  // happened.
+  | "account_deleted"
+  // specs/plan-tiered-upload.md — a plan switch via PATCH /api/auth/plan
+  // (PTU5, recommended/unchallenged: consistent with the existing pattern of
+  // auditing account-affecting changes). metadata carries fromPlan/toPlan.
+  | "plan_changed";
 
 export type AuditActorType = "owner" | "guest";
 
-export type AuditResourceType = "photo" | "folder" | "guest" | "access_request";
+export type AuditResourceType = "photo" | "folder" | "guest" | "access_request" | "user";
 
 export interface LogAuditInput {
   actorType: AuditActorType;
@@ -123,10 +134,9 @@ export function logAudit(input: LogAuditInput): void {
   void insertImpl(input).catch((err) => {
     // Log-and-swallow: a failed audit write MUST NOT surface to the primary
     // action (it has already committed and responded). Never re-throw.
-    // eslint-disable-next-line no-console
-    console.error(
-      `[audit] failed to write audit_log row (action=${input.action}, owner=${input.ownerId}); primary action unaffected:`,
-      err,
+    logger.error(
+      { err, action: input.action, ownerId: input.ownerId },
+      "failed to write audit_log row; primary action unaffected",
     );
   });
 }

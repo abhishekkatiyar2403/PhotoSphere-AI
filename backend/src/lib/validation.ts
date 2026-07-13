@@ -41,8 +41,16 @@ export const changePasswordSchema = z.object({
   newPassword: NEW_PASSWORD_SCHEMA,
 });
 
+// PATCH /api/auth/plan — specs/plan-tiered-upload.md, a no-billing,
+// testing-only plan switcher (PTU1's enum, RESOLVED: matches the Prisma
+// $Enums.Plan member names exactly).
+export const updatePlanSchema = z.object({
+  plan: z.enum(["free", "pro", "studio"]),
+});
+
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type UpdatePlanInput = z.infer<typeof updatePlanSchema>;
 
 // --- specs/ai-classification.md §6-7 ---
 
@@ -331,7 +339,17 @@ export type AuditQuery = z.infer<typeof auditQuerySchema>;
 // upload need. MAX_UPLOAD_BYTES mirrors upload-pipeline.md's existing 50MB
 // per-file ceiling (routes/photos.ts's MAX_UPLOAD_BYTES) — reused, not
 // re-litigated, so batch and single-file uploads share one size policy.
-export const MAX_BATCH_FILES = 1000;
+//
+// RENAMED by specs/plan-tiered-upload.md: this is no longer the real
+// per-request cap for everyone — it's now an ABSOLUTE ceiling across all
+// plan tiers (Studio's own 1500-file cap, the highest number any plan is
+// ever allowed), enforced at the Zod-schema layer as cheap pre-DB-lookup
+// defense-in-depth against a wildly oversized payload. The REAL per-plan
+// cap is checked in routes/upload.ts's /initiate handler, after the
+// caller's plan is known (see lib/plans.ts's getBatchLimit) — a per-plan
+// cap cannot live at this static schema layer since parsing happens before
+// the route has looked up who the caller is.
+export const ABSOLUTE_MAX_BATCH_FILES = 1500;
 const MAX_BATCH_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
 const ALLOWED_UPLOAD_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic"] as const;
@@ -363,7 +381,7 @@ export const initiateUploadSchema = z.object({
   files: z
     .array(fileDescriptorSchema)
     .min(1, "files must not be empty")
-    .max(MAX_BATCH_FILES, `files must not exceed ${MAX_BATCH_FILES}`),
+    .max(ABSOLUTE_MAX_BATCH_FILES, `files must not exceed ${ABSOLUTE_MAX_BATCH_FILES}`),
   collectionId: z.string().uuid().optional(),
 });
 
@@ -387,7 +405,7 @@ export const completeUploadSchema = z.object({
       }),
     )
     .min(1, "files must not be empty")
-    .max(MAX_BATCH_FILES, `files must not exceed ${MAX_BATCH_FILES}`),
+    .max(ABSOLUTE_MAX_BATCH_FILES, `files must not exceed ${ABSOLUTE_MAX_BATCH_FILES}`),
 });
 
 export const abortUploadSchema = z.object({

@@ -35,13 +35,29 @@ async function apiFetch(path: string, init?: RequestInit) {
   return body;
 }
 
+// specs/plan-tiered-upload.md — no-billing, testing-only plan tiers.
+export type PlanTier = "free" | "pro" | "studio";
+
+export type MeResponse = {
+  user: { id: string; email: string; name: string; plan: PlanTier };
+};
+
+export type UpdatePlanResponse = {
+  user: { id: string; email: string; name: string; plan: PlanTier };
+  storage: { limitBytes: string; usedBytes: string };
+};
+
 export const authApi = {
   signup: (input: { email: string; password: string; name: string }) =>
     apiFetch("/api/auth/signup", { method: "POST", body: JSON.stringify(input) }),
   login: (input: { email: string; password: string }) =>
     apiFetch("/api/auth/login", { method: "POST", body: JSON.stringify(input) }),
   logout: () => apiFetch("/api/auth/logout", { method: "POST" }),
-  me: () => apiFetch("/api/auth/me", { method: "GET" }),
+  me: (): Promise<MeResponse> => apiFetch("/api/auth/me", { method: "GET" }),
+  // Testing-only plan switcher (PATCH /api/auth/plan) — no payment step, no
+  // pricing. See /settings.
+  updatePlan: (plan: PlanTier): Promise<UpdatePlanResponse> =>
+    apiFetch("/api/auth/plan", { method: "PATCH", body: JSON.stringify({ plan }) }),
 };
 
 // Bare-bones upload/poll/preview round-trip only - deliberately unstyled per
@@ -800,6 +816,23 @@ export type CompleteUploadResponse = {
   sessionId: string;
   results: CompleteUploadResult[];
 };
+
+// specs/plan-tiered-upload.md — /initiate's plan-aware batch-cap 400, a
+// distinct `error` value from the generic Zod-validation-failure shape (see
+// routes/upload.ts) so the caller can special-case exactly this response
+// with a named plan/limit message, same "isXConflict" type-guard pattern as
+// isRestoreConflict/isFolderDeletedConflict above.
+export type BatchLimitExceededBody = {
+  error: "batch_limit_exceeded";
+  message: string;
+  plan: PlanTier;
+  limit: number;
+  requested: number;
+};
+
+export function isBatchLimitExceeded(err: unknown): err is ApiError & { body: BatchLimitExceededBody } {
+  return err instanceof ApiError && err.status === 400 && err.body?.error === "batch_limit_exceeded";
+}
 
 export const uploadApi = {
   initiate: (files: UploadFileDescriptor[]): Promise<InitiateUploadResponse> =>

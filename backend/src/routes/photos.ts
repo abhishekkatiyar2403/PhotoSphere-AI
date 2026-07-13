@@ -10,6 +10,7 @@ import { hasLivePermission } from "../lib/guestShareGuard";
 import { prisma } from "../lib/prisma";
 import { serializableTransaction } from "../lib/serializableTransaction";
 import { PhotoProcessingJobData, photoProcessingQueue } from "../lib/queue";
+import { getJobPriority } from "../lib/plans";
 import { putObject } from "../lib/storage";
 import { getPresignedDownloadUrl, getPresignedGetUrl } from "../lib/storage";
 import { originalKey, thumbnailKey } from "../lib/storageKeys";
@@ -24,7 +25,7 @@ import {
 import { requireAuth } from "../middleware/requireAuth";
 import { reclassifyRateLimiter } from "../middleware/reclassifyRateLimiter";
 import { uploadRateLimiter } from "../middleware/uploadRateLimiter";
-import { PHOTO_CARD_SELECT, toPhotoCard, computeReason } from "../lib/photoCard";
+import { PHOTO_CARD_SELECT, toPhotoCard, computeReason, labelConfidences } from "../lib/photoCard";
 import { computePurgeAt, findLiveFolderByName, generateNonCollidingRecoveredName } from "./folders";
 import { preflightDownloadByIds } from "../lib/folderDownload";
 import { streamFolderZip } from "../lib/folderZip";
@@ -141,7 +142,9 @@ router.post(
     const bullJob = await photoProcessingQueue.add(
       "pipeline",
       { photoId: photo.id } satisfies PhotoProcessingJobData,
-      { jobId: job.id },
+      // specs/plan-tiered-upload.md: dbUser is already fully fetched above
+      // (for the quota check), so .plan is already in hand.
+      { jobId: job.id, priority: getJobPriority(dbUser.plan) },
     );
 
     return res.status(202).json({
@@ -326,6 +329,13 @@ router.get(
       // Explains why this photo is sitting in Unfiled or "Uncategorized"
       // instead of a normal category folder — null for a normally-filed photo.
       reason: computeReason(photo),
+      aiLabels: photo.aiLabels,
+      aiConfidence: photo.aiConfidence,
+      // Per-label confidence (Abhishek's request, 2026-07-11) — parallel to
+      // aiLabels, e.g. [{ label: "Shark", confidence: 0.55 }, ...]. null
+      // confidence per label means the photo predates the detection cache
+      // (or was classified by the mock provider), not that it's zero.
+      aiLabelConfidences: labelConfidences(photo),
     });
   }),
 );
@@ -362,6 +372,9 @@ router.get(
       status: photo.aiClassificationStatus,
       aiLabels: photo.aiLabels,
       aiConfidence: photo.aiConfidence,
+      // Per-label confidence (Abhishek's request, 2026-07-11) — see the main
+      // "/:id" endpoint's identical field for the null-vs-zero convention.
+      aiLabelConfidences: labelConfidences(photo),
       folderId: photo.folderId,
       folder: photo.folder ? { id: photo.folder.id, name: photo.folder.name } : null,
       collectionId: photo.collectionId,

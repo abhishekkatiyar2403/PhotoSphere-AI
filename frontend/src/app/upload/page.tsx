@@ -14,7 +14,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { authApi, photosApi, uploadApi, type CompleteUploadResult, type UploadFileDescriptor } from "@/lib/api";
+import {
+  authApi,
+  isBatchLimitExceeded,
+  photosApi,
+  uploadApi,
+  type CompleteUploadResult,
+  type UploadFileDescriptor,
+} from "@/lib/api";
 import { createUppyForSession, CompletionBatcher, sha256OfFile } from "@/lib/uploadBatch";
 import UiV2Banner from "@/components/UiV2Banner";
 
@@ -155,7 +162,16 @@ export default function UploadPage() {
     try {
       initiateRes = await uploadApi.initiate(descriptors);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not start the upload batch";
+      // specs/plan-tiered-upload.md: /initiate's plan-aware batch cap has a
+      // distinct `error: "batch_limit_exceeded"` shape (not the generic Zod-
+      // validation-failure shape) specifically so this can be special-cased
+      // with a named plan/limit message instead of a generic "upload
+      // failed" fallthrough.
+      const message = isBatchLimitExceeded(err)
+        ? `Your ${err.body.plan} plan allows batches of up to ${err.body.limit} photos — ${err.body.requested} were selected. Split into smaller batches, or switch plans in Settings.`
+        : err instanceof Error
+          ? err.message
+          : "Could not start the upload batch";
       for (const it of newItems) updateItem(it.clientId, { queueStatus: "error", error: message });
       return;
     }

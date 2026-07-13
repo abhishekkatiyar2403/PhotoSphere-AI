@@ -12,12 +12,26 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// specs/plan-tiered-upload.md PTU1 (RESOLVED, Abhishek 2026-07-13): promoted
+// from a plain String to a real enum now that ≥4 call sites branch on its
+// value (lib/plans.ts's three lookup maps, /api/upload/initiate's batch-cap
+// check, both photoProcessingQueue.add priority call sites, the new
+// PATCH /api/auth/plan switcher) — eliminates the "Studio"/"studio"/"premium"
+// typo class at both the TS and Postgres level. Every existing row was
+// already exactly "free" at migration time (confirmed via psql), so this is
+// a clean promotion with no data-fix migration needed.
+enum Plan {
+  free
+  pro
+  studio
+}
+
 model User {
   id                String   @id @default(uuid())
   email             String   @unique
   passwordHash      String   @map("password_hash")
   name              String
-  plan              String   @default("free")
+  plan              Plan     @default(free)
   storageUsedBytes  BigInt   @default(0) @map("storage_used_bytes")
   storageLimitBytes BigInt   @default(5368709120) @map("storage_limit_bytes")
   createdAt         DateTime @default(now()) @map("created_at")

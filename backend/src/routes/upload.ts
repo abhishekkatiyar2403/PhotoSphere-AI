@@ -17,6 +17,7 @@ import { abortUploadSchema, completeUploadSchema, initiateUploadSchema } from ".
 import { requireAuth } from "../middleware/requireAuth";
 import { initiateUploadRateLimiter } from "../middleware/initiateUploadRateLimiter";
 import { logger } from "../lib/logger";
+import { getBatchLimit, getJobPriority } from "../lib/plans";
 
 const router = Router();
 
@@ -77,6 +78,24 @@ router.post(
     const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
     if (!dbUser) {
       return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    // specs/plan-tiered-upload.md: the REAL plan-aware batch cap, checked
+    // now that dbUser (and therefore dbUser.plan) is known — the schema-
+    // layer ABSOLUTE_MAX_BATCH_FILES check above is only a cross-tier
+    // ceiling, not this. Distinct `error` value from the generic Zod-failure
+    // shape so the frontend can special-case an upgrade nudge. Ordered
+    // BEFORE the storage-quota check below (fail fast on the cheaper check
+    // first, per the spec).
+    const batchLimit = getBatchLimit(dbUser.plan);
+    if (input.files.length > batchLimit) {
+      return res.status(400).json({
+        error: "batch_limit_exceeded",
+        message: `Your ${dbUser.plan} plan allows up to ${batchLimit} photos per batch upload.`,
+        plan: dbUser.plan,
+        limit: batchLimit,
+        requested: input.files.length,
+      });
     }
 
     // Whole-batch quota check (mirrors the single-file route's pre-check,
@@ -203,6 +222,13 @@ router.post(
       return res.status(409).json({ error: `Upload session is already ${session.status}` });
     }
 
+    // specs/plan-tiered-upload.md: one lookup for the WHOLE session (not
+    // per-file — a session has exactly one owner), priority computed once
+    // and threaded into every completeOneFile call below. This route never
+    // fetched the session owner's User row before this spec.
+    const sessionOwner = await prisma.user.findUnique({ where: { id: session.ownerId }, select: { plan: true } });
+    const priority = getJobPriority(sessionOwner?.plan ?? "free");
+
     const results: (
       | { clientId: string; photoId: string; status: "queued" }
       | { clientId: string; failed: true; reason: string }
@@ -213,7 +239,7 @@ router.post(
     let uploadedBytesDelta = 0n;
 
     for (const item of input.files) {
-      const result = await completeOneFile(session.id, session.ownerId, item);
+      const result = await completeOneFile(session.id, session.ownerId, item, priority);
       results.push(result);
       if ("photoId" in result) {
         completedDelta += 1;
@@ -253,6 +279,7 @@ async function completeOneFile(
   sessionId: string,
   ownerId: string,
   item: { clientId: string; parts: { partNumber: number; eTag: string }[] },
+  priority: number,
 ): Promise<
   { clientId: string; photoId: string; status: "queued" } | { clientId: string; failed: true; reason: string }
 > {
@@ -331,7 +358,7 @@ async function completeOneFile(
     await photoProcessingQueue.add(
       "pipeline",
       { photoId: photo.id } satisfies PhotoProcessingJobData,
-      { jobId: job.id },
+      { jobId: job.id, priority },
     );
 
     return { clientId: item.clientId, photoId: photo.id, status: "queued" };

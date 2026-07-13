@@ -9,7 +9,7 @@ import { prisma } from "../lib/prisma";
 import { ensureBucketExists } from "../lib/storage";
 import { runUploadSessionCleanupJob } from "../lib/uploadSessionCleanupJob";
 import { createMultipartUpload } from "../lib/storage";
-import { MAX_BATCH_FILES } from "../lib/validation";
+import { getBatchLimit } from "../lib/plans";
 
 // Covers specs/production-upload-batch.md's Acceptance Criteria checklist at
 // the API layer, against real local MinIO (docker compose up -d) — presigned
@@ -153,12 +153,20 @@ describe("batch upload (specs/production-upload-batch.md, smoke)", () => {
     await prisma.user.update({ where: { id: userId }, data: { storageLimitBytes: BigInt("5368709120") } });
   });
 
-  it("over MAX_BATCH_FILES -> 400, nothing created", async () => {
+  // specs/plan-tiered-upload.md: this test's user is on the default `free`
+  // plan (getBatchLimit("free") === 50), so a request over that plan's cap
+  // now 400s via the NEW plan-aware batch_limit_exceeded shape, not the old
+  // flat MAX_BATCH_FILES=1000 ceiling — fixture updated to reflect that
+  // (this file's own dedicated plan-tiered coverage lives in
+  // plan-tiered-upload.smoke.test.ts, including the ABSOLUTE_MAX_BATCH_FILES
+  // cross-tier ceiling case).
+  it("over the free plan's batch limit -> 400 batch_limit_exceeded, nothing created", async () => {
     if (!infraAvailable) return;
 
     const sessionCountBefore = await prisma.uploadSession.count({ where: { ownerId: userId } });
+    const freeLimit = getBatchLimit("free");
 
-    const files = Array.from({ length: MAX_BATCH_FILES + 1 }, (_, i) => ({
+    const files = Array.from({ length: freeLimit + 1 }, (_, i) => ({
       clientId: crypto.randomUUID(),
       filename: `f${i}.jpg`,
       sizeBytes: 100,
@@ -172,6 +180,10 @@ describe("batch upload (specs/production-upload-batch.md, smoke)", () => {
       .send({ files });
 
     expect(res.status).toBe(400);
+    expect(res.body.error).toBe("batch_limit_exceeded");
+    expect(res.body.plan).toBe("free");
+    expect(res.body.limit).toBe(freeLimit);
+    expect(res.body.requested).toBe(freeLimit + 1);
     const sessionCountAfter = await prisma.uploadSession.count({ where: { ownerId: userId } });
     expect(sessionCountAfter).toBe(sessionCountBefore);
   });

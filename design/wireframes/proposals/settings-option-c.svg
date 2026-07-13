@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <rect width="800" height="600" fill="#f7f7f9"/>
+  <!-- topbar, WITHOUT a Settings nav link (this option doesn't add one) -->
+  <rect x="0" y="0" width="800" height="56" fill="#ffffff"/>
+  <line x1="0" y1="56" x2="800" y2="56" stroke="#e2e2e6"/>
+  <text x="24" y="34" font-size="18" font-weight="bold" fill="#1b3a9e">PhotoSphere AI — Dashboard</text>
+  <circle cx="750" cy="28" r="16" fill="#e8eefc" stroke="#1b3a9e"/>
+  <text x="750" y="33" font-size="12" text-anchor="middle" fill="#1b3a9e">AK</text>
+
+  <!-- dropdown panel anchored under the avatar -->
+  <rect x="560" y="60" width="220" height="230" rx="8" fill="#ffffff" stroke="#cfcfd6"/>
+  <text x="580" y="86" font-size="13" fill="#666">akatiyar@example.com</text>
+  <line x1="560" y1="98" x2="780" y2="98" stroke="#eee"/>
+
+  <text x="580" y="122" font-size="13" font-weight="bold" fill="#222">Plan (testing only)</text>
+  <rect x="580" y="136" width="180" height="30" rx="6" fill="#e8eefc" stroke="#1b3a9e"/>
+  <text x="670" y="156" font-size="12" text-anchor="middle" fill="#1b3a9e">Free ▾</text>
+  <text x="580" y="182" font-size="10" fill="#999">50/batch · 5GB</text>
+
+  <line x1="560" y1="200" x2="780" y2="200" stroke="#eee"/>
+  <text x="580" y="222" font-size="13" fill="#333">Log out</text>
+
+  <text x="40" y="500" font-size="11" fill="#999">Option C — no dedicated page; a profile-menu dropdown panel off the topbar avatar.</text>
+  <text x="40" y="518" font-size="11" fill="#999">Lowest build footprint, but no room to grow (future account settings would need re-plumbing),</text>
+  <text x="40" y="536" font-size="11" fill="#999">and this app has no avatar/profile-menu affordance anywhere today — would be new UI on top of new UI.</text>
+</svg>
