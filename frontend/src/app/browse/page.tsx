@@ -284,6 +284,9 @@ function BrowsePageInner() {
           <Link href="/trash" className="dashboard-guests-link" data-testid="browse-trash-link">
             Trash
           </Link>
+          <Link href="/settings" className="dashboard-guests-link" data-testid="browse-settings-link">
+            Settings
+          </Link>
         </div>
       </div>
 

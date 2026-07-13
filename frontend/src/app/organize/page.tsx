@@ -1160,6 +1160,9 @@ export default function OrganizePage() {
           <Link href="/trash" className="dashboard-guests-link" data-testid="organize-trash-link">
             Trash
           </Link>
+          <Link href="/settings" className="dashboard-guests-link" data-testid="organize-settings-link">
+            Settings
+          </Link>
         </div>
       </div>
 

@@ -167,6 +167,9 @@ export default function DashboardPage() {
           <Link href="/trash" className="dashboard-guests-link" data-testid="dashboard-trash-link">
             Trash
           </Link>
+          <Link href="/settings" className="dashboard-guests-link" data-testid="dashboard-settings-link">
+            Settings
+          </Link>
           <span>{user.name}</span>
           <button type="button" className="dashboard-logout" onClick={handleLogout}>
             Log out

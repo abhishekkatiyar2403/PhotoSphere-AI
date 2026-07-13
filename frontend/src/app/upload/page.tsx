@@ -302,6 +302,9 @@ export default function UploadPage() {
           <Link href="/trash" className="dashboard-guests-link" data-testid="upload-trash-link">
             Trash
           </Link>
+          <Link href="/settings" className="dashboard-guests-link" data-testid="upload-settings-link">
+            Settings
+          </Link>
         </div>
       </div>
 

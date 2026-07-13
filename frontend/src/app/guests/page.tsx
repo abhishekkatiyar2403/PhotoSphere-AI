@@ -305,6 +305,9 @@ export default function GuestsPage() {
           <Link href="/trash" className="dashboard-guests-link" data-testid="guests-trash-link">
             Trash
           </Link>
+          <Link href="/settings" className="dashboard-guests-link" data-testid="guests-settings-link">
+            Settings
+          </Link>
         </div>
       </div>
 

@@ -201,6 +201,9 @@ export default function SharePage() {
           <Link href="/trash" className="dashboard-guests-link" data-testid="share-trash-link">
             Trash
           </Link>
+          <Link href="/settings" className="dashboard-guests-link" data-testid="share-settings-link">
+            Settings
+          </Link>
         </div>
       </div>
 

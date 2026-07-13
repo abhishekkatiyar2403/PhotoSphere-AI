@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <rect width="800" height="600" fill="#f7f7f9"/>
+  <!-- topbar -->
+  <rect x="0" y="0" width="800" height="56" fill="#ffffff"/>
+  <line x1="0" y1="56" x2="800" y2="56" stroke="#e2e2e6"/>
+  <text x="24" y="34" font-size="18" font-weight="bold" fill="#1b3a9e">PhotoSphere AI — Settings</text>
+  <text x="470" y="34" font-size="12" fill="#555">Upload · Organize · Browse · Search · Guests · Activity · Trash · Settings</text>
+
+  <!-- page title -->
+  <text x="40" y="100" font-size="24" font-weight="bold" fill="#222">Settings</text>
+
+  <!-- single card -->
+  <rect x="40" y="130" width="720" height="220" rx="10" fill="#ffffff" stroke="#e2e2e6"/>
+  <text x="64" y="164" font-size="16" font-weight="bold" fill="#222">Plan (testing only — no billing)</text>
+  <text x="64" y="186" font-size="12" fill="#888">Switches your batch-upload cap, storage quota, and processing priority</text>
+  <text x="64" y="202" font-size="12" fill="#888">for testing purposes only. Switching applies immediately.</text>
+
+  <!-- segmented control: A's instant-apply mechanic + B's inline stats -->
+  <rect x="64" y="222" width="200" height="60" rx="6" fill="#eef1fc" stroke="#1b3a9e" stroke-width="2"/>
+  <text x="164" y="250" font-size="14" text-anchor="middle" fill="#1b3a9e" font-weight="bold">Free</text>
+  <text x="164" y="268" font-size="10" text-anchor="middle" fill="#1b3a9e">50/batch · 5GB · Low</text>
+
+  <rect x="280" y="222" width="200" height="60" rx="6" fill="#ffffff" stroke="#cfcfd6"/>
+  <text x="380" y="250" font-size="14" text-anchor="middle" fill="#333">Pro</text>
+  <text x="380" y="268" font-size="10" text-anchor="middle" fill="#777">500/batch · 100GB · Normal</text>
+
+  <rect x="496" y="222" width="200" height="60" rx="6" fill="#ffffff" stroke="#cfcfd6"/>
+  <text x="596" y="250" font-size="14" text-anchor="middle" fill="#333">Studio</text>
+  <text x="596" y="268" font-size="10" text-anchor="middle" fill="#777">1500/batch · 500GB · High</text>
+
+  <text x="64" y="320" font-size="11" fill="#1a7f37">Switched to Free.</text>
+
+  <text x="40" y="400" font-size="11" fill="#999">PICKED 2026-07-14: merge of A + B — A's instant-apply segmented control</text>
+  <text x="40" y="418" font-size="11" fill="#999">(click = immediate switch, no separate Apply button), with each segment</text>
+  <text x="40" y="436" font-size="11" fill="#999">showing B's inline comparison numbers (batch limit · storage · priority).</text>
+</svg>
