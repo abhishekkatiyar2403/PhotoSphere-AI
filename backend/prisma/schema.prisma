@@ -23,14 +23,111 @@ model User {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  sessions    Session[]
-  photos      Photo[]
-  collections Collection[]
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  photos              Photo[]
+  collections         Collection[]
   // Back-relation only (specs/guest-access-otp.md §1). No physical column
   // added to `users` — the FK lives on guest_users.created_by.
   guestsInvited GuestUser[] @relation("GuestsInvited")
+  personFaces   PersonFace[]
+  // specs/production-upload-batch.md — batch upload sessions.
+  uploadSessions UploadSession[]
 
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// specs/production-upload-batch.md — presigned multipart batch upload.
+// Additive only; the existing single-file POST /api/photos/upload path
+// (Photo/ProcessingJob rows above) is completely untouched by either model
+// below. A completed batch item is created as a plain Photo row with no
+// back-reference to the UploadSession it came from (spec Open Question 5,
+// accepted trade-off) — only these two rows track batch-level progress.
+// ---------------------------------------------------------------------------
+
+// One row per initiated batch (POST /api/upload/initiate). Tracks
+// aggregate progress only — per-file bookkeeping (S3 key/uploadId) lives in
+// UploadSessionFile below (PUB7, DECIDED: a companion table, not a
+// client-trusted payload).
+model UploadSession {
+  id             String    @id @default(uuid())
+  ownerId        String    @map("owner_id")
+  collectionId   String?   @map("collection_id") // same nullable/unused-until-Collections-CRUD posture as Photo.collectionId
+  totalFiles     Int       @map("total_files")
+  completedFiles Int       @default(0) @map("completed_files")
+  failedFiles    Int       @default(0) @map("failed_files")
+  totalBytes     BigInt    @map("total_bytes")
+  uploadedBytes  BigInt    @default(0) @map("uploaded_bytes")
+  status         String    @default("in_progress") @map("status") // in_progress | completed | aborted | expired
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  expiresAt      DateTime  @map("expires_at") // stale-session cleanup job sweeps past this (PUB4)
+
+  owner User                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  files UploadSessionFile[]
+
+  @@index([ownerId, status])
+  @@index([expiresAt]) // for the stale-session sweep, mirrors Folder/Photo's deletedAt index pattern
+  @@map("upload_sessions")
+}
+
+// Per-file bookkeeping between /initiate and /complete|/abort (PUB7,
+// DECIDED 2026-07-13: a companion table). /complete and /abort receive only
+// sessionId + clientId(s) from the client — the server looks up key/uploadId
+// from THIS table (scoped to sessionId/ownerId via the session relation)
+// rather than trusting a client-supplied key/uploadId directly, which would
+// let a compromised/buggy client reference an arbitrary S3 key/uploadId pair.
+model UploadSessionFile {
+  id        String   @id @default(uuid())
+  sessionId String   @map("session_id")
+  clientId  String   @map("client_id") // browser-generated correlation id, echoed from /initiate's response
+  key       String   @map("key")       // S3/MinIO object key
+  uploadId  String   @map("upload_id") // S3/MinIO multipart UploadId
+  sizeBytes BigInt   @map("size_bytes")
+  sha256    String   @map("sha256")
+  mimeType  String   @map("mime_type")
+  // Not in the spec's literal Prisma block — added because Photo.originalFilename
+  // is non-nullable and must be populated at /complete time, once Photo-row
+  // creation is deferred (spec's own recommendation, Open Question #6) past
+  // /initiate (the only point the client's declared filename is otherwise
+  // available). Flagged as a deviation in the MR draft, not silently baked in.
+  originalFilename String   @map("original_filename")
+  status    String   @default("pending") @map("status") // pending | completed | failed | aborted
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session UploadSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, clientId])
+  @@index([sessionId, status])
+  @@map("upload_session_files")
+}
+
+// Face-recognition person registry (renameable-Person-folders feature,
+// 2026-07-11). One row per DISTINCT person the face pipeline has enrolled:
+// maps a Rekognition collection FaceId to the folder that person's photos
+// file into. The folder link is by ID, not name — so renaming "Person 1" to
+// "Mom" keeps every future photo of that person filing into "Mom" (the old
+// implementation resolved via the "person-N" naming convention, which a
+// rename silently broke, minting a duplicate "Person N" folder).
+//
+// Lifecycle: rows die with their folder (hard delete cascades) or their
+// owner. A face that matches in Rekognition but has no row here (e.g. its
+// folder was purged) gets a FRESH folder created and the mapping re-pointed
+// — never a re-index of the same face into the collection.
+model PersonFace {
+  id        String   @id @default(uuid())
+  ownerId   String   @map("owner_id")
+  faceId    String   @map("face_id") // Rekognition FaceId in this owner's collection
+  folderId  String   @map("folder_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  owner  User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, faceId]) // one mapping per enrolled face; race-safe upsert target
+  @@index([ownerId])
+  @@map("person_faces")
 }
 
 // Roadmap §6 `collections` table (listing-only subset this pass, per
@@ -76,6 +173,7 @@ model Folder {
   // Back-relation only (specs/guest-access-otp.md §1). The FK lives on
   // folder_permissions.folder_id; no physical column added to `folders`.
   permissions FolderPermission[]
+  personFaces PersonFace[]
 
   // T7 (specs/trash-system.md, FINAL DECISION 3): this is DELIBERATELY a
   // plain non-unique index, NOT `@@unique([collectionId, name])`. The REAL
@@ -106,6 +204,26 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+// Password reset (2026-07-13 backend audit #8). Same opaque-token pattern as
+// Session/GuestSession/InviteToken — raw token only ever in the emailed
+// link, SHA-256 hash in the DB. One-hour TTL, single-use (usedAt set the
+// moment it's redeemed, so a reused/replayed link 404s the same as an
+// unknown one — never distinguishable, same anti-enumeration posture as
+// every other token surface in this app).
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 // Roadmap §6 `photos` table (image-relevant subset only, per
@@ -149,6 +267,16 @@ model Photo {
   folderId     String? @map("folder_id")
 
   aiClassificationStatus String @default("pending") @map("ai_classification_status") // pending|processing|done|duplicate|failed
+
+  // Cached raw detection result (the full ClassificationResult JSON: labels,
+  // per-label confidences, taxonomies) from the photo's LAST live provider
+  // call. Reclassify re-runs only the cheap local mapping over this cache —
+  // every mapping-rule improvement so far (Bugs.md #13, #15-#18) re-billed
+  // Rekognition for the whole library despite the detections being identical
+  // and correct every time. Null = never classified live (or predates this
+  // column); a reclassify then falls back to a real provider call and
+  // populates it.
+  aiDetection Json? @map("ai_detection")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

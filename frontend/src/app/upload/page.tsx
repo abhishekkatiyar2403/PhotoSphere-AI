@@ -1,34 +1,39 @@
 "use client";
 
-// Multi-file upload page. Originally a deliberately unstyled single-file
-// proof-of-concept ("polished upload UI is Week 7-8 scope") - that framing is
-// now stale: multi-file selection/drop is a real product need surfaced via
-// direct user feedback (users expect to select/drop several photos at once).
-// This still calls the SAME single-file backend endpoint
-// (photosApi.uploadWithProgress -> POST /api/photos/upload, multipart "file"
-// field) once per selected file - the backend's one-file-per-request
-// contract (multer .single("file")) is unchanged; this file only adds a
-// per-file queue + concurrency cap on the client.
+// specs/production-upload-batch.md — batch upload page. REWORKED from the
+// old "loop the single-file POST /api/photos/upload endpoint N times" flow
+// (still true of /upload/v2, untouched) to the new presigned-multipart batch
+// path: ONE POST /api/upload/initiate for the whole selection (any file
+// count, even 1 — Open Question #8, no dual-wiring), Uppy uploading every
+// part directly to MinIO/S3 (see lib/uploadBatch.ts), then chunked
+// POST /api/upload/complete calls turning each assembled file into a
+// normally-processing Photo row. The existing photosApi.status polling for
+// classification progress is UNCHANGED — it still runs per returned
+// photoId, exactly as before, once /complete hands one back.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { authApi, photosApi } from "@/lib/api";
+import { authApi, photosApi, uploadApi, type CompleteUploadResult, type UploadFileDescriptor } from "@/lib/api";
+import { createUppyForSession, CompletionBatcher, sha256OfFile } from "@/lib/uploadBatch";
+import UiV2Banner from "@/components/UiV2Banner";
 
 type PollStatus = "pending" | "processing" | "done" | "duplicate" | "failed";
 
-// Per-file upload item - mirrors the shape of state /organize's PhotoCard
-// tracks per photo (id, status, labels, duplicate-of, thumbnail, error), just
-// modeled as one entry in a list instead of one page-level set of fields, so
-// each file's progress/status/result is fully independent of every other
-// file's.
 type UploadItem = {
-  // A client-only key so React can key the list before a server photoId
-  // exists (queued/uploading items have no photoId yet).
-  key: string;
+  clientId: string; // also the batch-lifecycle correlation id (initiate/complete/Uppy file id)
   file: File;
-  queueStatus: "queued" | "uploading" | "polling" | "done" | "duplicate" | "failed" | "error";
-  progress: number; // 0..1, upload-transport progress only (see handleUpload)
+  queueStatus:
+    | "queued"
+    | "hashing"
+    | "uploading"
+    | "completing"
+    | "polling"
+    | "done"
+    | "duplicate"
+    | "failed"
+    | "error";
+  progress: number; // 0..1, part-upload transport progress only
   photoId: string | null;
   pollStatus: PollStatus | null;
   labels: string[];
@@ -37,18 +42,13 @@ type UploadItem = {
   error: string | null;
 };
 
-// Small concurrency cap rather than fully sequential: uploads are I/O-bound
-// (network + multer buffering), so running a few in parallel keeps a batch
-// of photos moving noticeably faster than one-at-a-time while still staying
-// well short of firing dozens of simultaneous multipart requests at the
-// backend. 3 was chosen as a reasonable, unscientific cap - low enough to be
-// gentle on the rate limiter and the single-file backend route, high enough
-// to matter for a typical "select 5-20 photos" batch.
-const UPLOAD_CONCURRENCY = 3;
+const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic"]);
 const POLL_INTERVAL_MS = 2000;
 
-function makeKey(file: File, index: number) {
-  return `${file.name}-${file.size}-${file.lastModified}-${index}-${Date.now()}`;
+function makeClientId(): string {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 export default function UploadPage() {
@@ -73,22 +73,22 @@ export default function UploadPage() {
     };
   }, []);
 
-  function updateItem(key: string, patch: Partial<UploadItem>) {
-    setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
+  function updateItem(clientId: string, patch: Partial<UploadItem>) {
+    setItems((prev) => prev.map((it) => (it.clientId === clientId ? { ...it, ...patch } : it)));
   }
 
-  function startPoll(key: string, photoId: string) {
+  function startPoll(clientId: string, photoId: string) {
     const interval = setInterval(async () => {
       try {
         const statusRes = await photosApi.status(photoId);
         const pollStatus = statusRes.status as PollStatus;
-        updateItem(key, { pollStatus });
+        updateItem(clientId, { pollStatus });
 
         if (["done", "duplicate", "failed"].includes(pollStatus)) {
           clearInterval(interval);
-          pollRefs.current.delete(key);
+          pollRefs.current.delete(clientId);
 
-          updateItem(key, {
+          updateItem(clientId, {
             queueStatus: pollStatus as "done" | "duplicate" | "failed",
             labels: statusRes.aiLabels ?? [],
             duplicateOfPhotoId: statusRes.duplicateOfPhotoId ?? null,
@@ -97,7 +97,7 @@ export default function UploadPage() {
           if (pollStatus === "done") {
             try {
               const photo = await photosApi.get(photoId);
-              updateItem(key, {
+              updateItem(clientId, {
                 thumbnailUrl: photo.thumbnails?.["400"] ?? photo.original?.url ?? null,
               });
             } catch {
@@ -108,68 +108,112 @@ export default function UploadPage() {
         }
       } catch (pollErr) {
         clearInterval(interval);
-        pollRefs.current.delete(key);
-        updateItem(key, {
+        pollRefs.current.delete(clientId);
+        updateItem(clientId, {
           queueStatus: "error",
           error: pollErr instanceof Error ? pollErr.message : "Polling failed",
         });
       }
     }, POLL_INTERVAL_MS);
-    pollRefs.current.set(key, interval);
+    pollRefs.current.set(clientId, interval);
   }
 
-  async function uploadOne(item: UploadItem) {
-    updateItem(item.key, { queueStatus: "uploading", progress: 0, error: null });
+  function handleCompletionResult(result: CompleteUploadResult) {
+    if ("photoId" in result) {
+      updateItem(result.clientId, { queueStatus: "polling", photoId: result.photoId, pollStatus: "pending" });
+      startPoll(result.clientId, result.photoId);
+    } else {
+      updateItem(result.clientId, { queueStatus: "failed", error: humanizeFailureReason(result.reason) });
+    }
+  }
+
+  // Runs one whole selection (any number of files, even 1 — Open Question #8:
+  // one code path, never falls back to the old single-file endpoint) through
+  // the batch flow: hash -> initiate (one call for the whole batch) ->
+  // Uppy part-uploads -> chunked completes -> per-photo polling.
+  const runBatch = useCallback(async (newItems: UploadItem[]) => {
+    for (const it of newItems) updateItem(it.clientId, { queueStatus: "hashing" });
+
+    let descriptors: UploadFileDescriptor[];
     try {
-      const res = await photosApi.uploadWithProgress(item.file, (fraction) =>
-        updateItem(item.key, { progress: fraction }),
+      descriptors = await Promise.all(
+        newItems.map(async (it) => ({
+          clientId: it.clientId,
+          filename: it.file.name,
+          sizeBytes: it.file.size,
+          mimeType: it.file.type as UploadFileDescriptor["mimeType"],
+          sha256: await sha256OfFile(it.file),
+        })),
       );
-      updateItem(item.key, {
-        queueStatus: "polling",
-        photoId: res.photoId,
-        pollStatus: "pending" as PollStatus,
-      });
-      startPoll(item.key, res.photoId);
-    } catch (uploadErr) {
-      updateItem(item.key, {
-        queueStatus: "error",
-        error: uploadErr instanceof Error ? uploadErr.message : "Upload failed",
-      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not read one or more files";
+      for (const it of newItems) updateItem(it.clientId, { queueStatus: "error", error: message });
+      return;
     }
-  }
 
-  // Runs the queued items through uploadOne with a small concurrency cap -
-  // each worker pulls the next still-queued item off the shared list until
-  // none remain, so at most UPLOAD_CONCURRENCY uploads are in flight at once
-  // regardless of how many files were added in one batch. One item failing
-  // (network error, 4xx, etc.) only marks that item "error" and lets its
-  // worker move on - it never blocks or hides the other items' progress.
-  const runQueue = useCallback((queued: UploadItem[]) => {
-    let cursor = 0;
-    function nextItem(): UploadItem | undefined {
-      const next = queued[cursor];
-      cursor += 1;
-      return next;
+    let initiateRes;
+    try {
+      initiateRes = await uploadApi.initiate(descriptors);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not start the upload batch";
+      for (const it of newItems) updateItem(it.clientId, { queueStatus: "error", error: message });
+      return;
     }
-    async function worker() {
-      let item = nextItem();
-      while (item) {
-        await uploadOne(item);
-        item = nextItem();
-      }
+
+    // Duplicates: skipped entirely, no bytes uploaded for them at all — a
+    // strictly better outcome than the old per-file flow's "upload, THEN the
+    // worker catches it as a duplicate."
+    for (const dup of initiateRes.duplicates) {
+      updateItem(dup.clientId, { queueStatus: "duplicate", duplicateOfPhotoId: dup.existingPhotoId });
     }
-    const workerCount = Math.min(UPLOAD_CONCURRENCY, queued.length);
-    for (let i = 0; i < workerCount; i += 1) {
-      void worker();
+
+    const toUpload = newItems.filter((it) => initiateRes!.files.some((f) => f.clientId === it.clientId));
+    if (toUpload.length === 0) return;
+
+    for (const it of toUpload) updateItem(it.clientId, { queueStatus: "uploading", progress: 0 });
+
+    const batcher = new CompletionBatcher(initiateRes.sessionId, handleCompletionResult);
+    const uppy = createUppyForSession(initiateRes, batcher);
+
+    uppy.on("upload-progress", (file, progress) => {
+      if (!file || progress.bytesTotal == null || progress.bytesTotal === 0) return;
+      updateItem(file.meta.clientId as string, { progress: progress.bytesUploaded / progress.bytesTotal });
+    });
+    uppy.on("upload-error", (file, error) => {
+      if (!file) return;
+      updateItem(file.meta.clientId as string, {
+        queueStatus: "error",
+        error: error instanceof Error ? error.message : "Upload failed",
+      });
+    });
+
+    for (const it of toUpload) {
+      uppy.addFile({
+        id: it.clientId,
+        name: it.file.name,
+        type: it.file.type,
+        data: it.file,
+        meta: { clientId: it.clientId },
+      });
+    }
+
+    try {
+      await uppy.upload();
+    } finally {
+      // Final call per spec — flush anything still queued once every file in
+      // this batch has finished (or failed) its part-upload phase.
+      await batcher.flush();
+      batcher.destroy();
+      uppy.destroy();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function addFiles(fileList: FileList | File[]) {
-    const files = Array.from(fileList);
+    const files = Array.from(fileList).filter((f) => ALLOWED_MIME_TYPES.has(f.type));
     if (files.length === 0) return;
-    const newItems: UploadItem[] = files.map((file, index) => ({
-      key: makeKey(file, index),
+    const newItems: UploadItem[] = files.map((file) => ({
+      clientId: makeClientId(),
       file,
       queueStatus: "queued",
       progress: 0,
@@ -181,7 +225,7 @@ export default function UploadPage() {
       error: null,
     }));
     setItems((prev) => [...prev, ...newItems]);
-    runQueue(newItems);
+    void runBatch(newItems);
   }
 
   function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -209,6 +253,10 @@ export default function UploadPage() {
 
   if (checking) return null;
 
+  const uploadedCount = items.filter((it) => it.photoId !== null).length;
+  const duplicateCount = items.filter((it) => it.queueStatus === "duplicate").length;
+  const failedCount = items.filter((it) => it.queueStatus === "failed" || it.queueStatus === "error").length;
+
   return (
     <main>
       <div className="organize-topbar">
@@ -219,6 +267,7 @@ export default function UploadPage() {
           — Upload
         </h1>
         <div className="dashboard-topbar-right">
+          <UiV2Banner href="/upload/v2" />
           <Link href="/organize" className="dashboard-guests-link" data-testid="upload-organize-link">
             Organize
           </Link>
@@ -241,7 +290,10 @@ export default function UploadPage() {
       </div>
 
       <div style={{ padding: 24 }}>
-        <p>Select or drop one or more photos to upload. Each file uploads and classifies independently.</p>
+        <p>
+          Select or drop one or more photos to upload — hundreds at once, uploaded directly to storage. Each
+          file uploads and classifies independently.
+        </p>
 
         <input
           type="file"
@@ -270,10 +322,18 @@ export default function UploadPage() {
         </div>
 
         {items.length > 0 && (
-          <div style={{ marginTop: 24, maxWidth: 640 }} data-testid="upload-list">
+          <p data-testid="upload-batch-summary" style={{ marginTop: 16, color: "#444" }}>
+            {uploadedCount} of {items.length} uploaded
+            {duplicateCount > 0 ? `, ${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"} skipped` : ""}
+            {failedCount > 0 ? `, ${failedCount} failed` : ""}
+          </p>
+        )}
+
+        {items.length > 0 && (
+          <div style={{ marginTop: 12, maxWidth: 640 }} data-testid="upload-list">
             {items.map((item) => (
               <div
-                key={item.key}
+                key={item.clientId}
                 data-testid="upload-item"
                 style={{
                   border: "1px solid #ddd",
@@ -284,7 +344,9 @@ export default function UploadPage() {
               >
                 <p style={{ margin: 0, fontWeight: 600 }}>{item.file.name}</p>
 
-                {(item.queueStatus === "queued" || item.queueStatus === "uploading") && (
+                {(item.queueStatus === "queued" ||
+                  item.queueStatus === "hashing" ||
+                  item.queueStatus === "uploading") && (
                   <div style={{ marginTop: 8 }}>
                     <progress
                       data-testid="upload-progress"
@@ -293,9 +355,17 @@ export default function UploadPage() {
                       style={{ width: "100%" }}
                     />
                     <span style={{ marginLeft: 8 }}>
-                      {item.queueStatus === "queued" ? "Queued" : `${Math.round(item.progress * 100)}%`}
+                      {item.queueStatus === "queued"
+                        ? "Queued"
+                        : item.queueStatus === "hashing"
+                          ? "Preparing…"
+                          : `${Math.round(item.progress * 100)}%`}
                     </span>
                   </div>
+                )}
+
+                {item.queueStatus === "duplicate" && (
+                  <p style={{ margin: 0 }}>Already in your library — duplicate of photo: {item.duplicateOfPhotoId}</p>
                 )}
 
                 {item.error && <p style={{ color: "red" }}>{item.error}</p>}
@@ -327,4 +397,17 @@ export default function UploadPage() {
       </div>
     </main>
   );
+}
+
+function humanizeFailureReason(reason: string): string {
+  switch (reason) {
+    case "invalid_file_type":
+      return "Unsupported or unrecognized file type";
+    case "assembly_failed":
+      return "Upload could not be assembled — please retry this file";
+    case "not_found_or_already_processed":
+      return "This file's upload session entry was not found";
+    default:
+      return "Upload failed";
+  }
 }

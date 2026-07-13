@@ -14,6 +14,12 @@ export const PHOTO_PROCESSING_QUEUE_NAME = "photo-processing";
 // second Queue/Worker pair for one repeatable job.
 export const TRASH_PURGE_JOB_NAME = "trash-purge";
 
+// specs/production-upload-batch.md (PUB4, DECIDED: option (a) — a daily
+// BullMQ repeatable job, same pattern as the trash-purge job above).
+// Registered on THIS SAME queue for the same reason T4's job was — reuse
+// rather than stand up a second queue for one repeatable sweep.
+export const UPLOAD_SESSION_CLEANUP_JOB_NAME = "upload-session-cleanup";
+
 declare global {
   // eslint-disable-next-line no-var
   var __photoQueueConnection: IORedis | undefined;
@@ -31,7 +37,13 @@ export interface TrashPurgeJobData {
   photoId?: undefined;
 }
 
-export type PhotoProcessingJobData = PipelineJobData | TrashPurgeJobData;
+// Same "no payload, operates on everything past its own cutoff" shape as
+// TrashPurgeJobData above.
+export interface UploadSessionCleanupJobData {
+  photoId?: undefined;
+}
+
+export type PhotoProcessingJobData = PipelineJobData | TrashPurgeJobData | UploadSessionCleanupJobData;
 
 function createConnection(): IORedis {
   return new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
@@ -40,6 +52,11 @@ function createConnection(): IORedis {
 }
 
 const connection = global.__photoQueueConnection ?? createConnection();
+
+// Exported so /health (app.ts) can PING the same Redis connection the queue
+// itself depends on, rather than opening a second one just to check
+// reachability (2026-07-13 backend audit #14).
+export const redisConnection = connection;
 
 export const photoProcessingQueue: Queue<PhotoProcessingJobData> =
   global.__photoQueue ??
@@ -67,6 +84,26 @@ export async function registerTrashPurgeJob(): Promise<void> {
     { pattern: "0 3 * * *" }, // once daily at 03:00 — retention is 7 days, no finer granularity needed
     {
       name: TRASH_PURGE_JOB_NAME,
+      data: {},
+      opts: { removeOnComplete: { count: 50 }, removeOnFail: false },
+    },
+  );
+}
+
+/**
+ * specs/production-upload-batch.md PUB4 (DECIDED): register the daily
+ * repeatable stale-upload-session cleanup job. Same idempotent
+ * upsertJobScheduler pattern as registerTrashPurgeJob above — safe to call
+ * on every worker/API boot without accumulating duplicate scheduled jobs.
+ * Called once at worker startup (worker.ts's main()), alongside the existing
+ * trash-purge registration.
+ */
+export async function registerUploadSessionCleanupJob(): Promise<void> {
+  await photoProcessingQueue.upsertJobScheduler(
+    UPLOAD_SESSION_CLEANUP_JOB_NAME,
+    { pattern: "0 4 * * *" }, // once daily at 04:00 — offset from the 03:00 trash-purge job
+    {
+      name: UPLOAD_SESSION_CLEANUP_JOB_NAME,
       data: {},
       opts: { removeOnComplete: { count: 50 }, removeOnFail: false },
     },

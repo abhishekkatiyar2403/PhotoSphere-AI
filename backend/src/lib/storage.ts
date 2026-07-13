@@ -1,10 +1,14 @@
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CreateBucketCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Readable } from "node:stream";
@@ -168,6 +172,97 @@ export async function deleteObject(key: string): Promise<void> {
       (err as { name?: string; Code?: string })?.name ?? (err as { Code?: string })?.Code;
     if (code === "NoSuchKey" || code === "NotFound") {
       return; // already gone — no-op success
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// specs/production-upload-batch.md — presigned multipart batch upload.
+// Additive only, following the exact usingRealS3 branch-free pattern above:
+// the same `s3` client instance already branches MinIO vs. real S3, and
+// multipart commands work identically against both. No change to any
+// function above this point.
+// ---------------------------------------------------------------------------
+
+/** Starts a multipart upload and returns its S3/MinIO UploadId. */
+export async function createMultipartUpload(
+  key: string,
+  contentType: string,
+): Promise<{ uploadId: string }> {
+  const result = await s3.send(
+    new CreateMultipartUploadCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }),
+  );
+  if (!result.UploadId) {
+    throw new Error(`createMultipartUpload for ${key} did not return an UploadId`);
+  }
+  return { uploadId: result.UploadId };
+}
+
+/**
+ * Returns a time-limited pre-signed URL for uploading ONE part directly
+ * from the browser to MinIO/S3 — no backend code runs while this URL is
+ * used, no file bytes ever pass through the Node process (spec's core
+ * architectural goal). A longer TTL than the read-side helpers (spec
+ * decision, PUB3 recommended default: 3600s) since a single part on a
+ * slow/mobile connection can legitimately take longer than 60 seconds.
+ */
+export async function getPresignedUploadPartUrl(
+  key: string,
+  uploadId: string,
+  partNumber: number,
+  expiresInSeconds = 3600,
+): Promise<string> {
+  const command = new UploadPartCommand({
+    Bucket: BUCKET,
+    Key: key,
+    UploadId: uploadId,
+    PartNumber: partNumber,
+  });
+  return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
+}
+
+/**
+ * Assembles the final object from its uploaded parts. Throws (propagates) on
+ * any S3-side integrity failure (e.g. a missing/mismatched part/ETag) — the
+ * caller (POST /api/upload/complete) must not create a Photo row if this
+ * throws, per spec.
+ */
+export async function completeMultipartUpload(
+  key: string,
+  uploadId: string,
+  parts: { partNumber: number; eTag: string }[],
+): Promise<void> {
+  await s3.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: BUCKET,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: {
+        Parts: parts
+          .slice()
+          .sort((a, b) => a.partNumber - b.partNumber)
+          .map((p) => ({ PartNumber: p.partNumber, ETag: p.eTag })),
+      },
+    }),
+  );
+}
+
+/**
+ * Aborts an in-progress multipart upload, freeing any already-uploaded parts
+ * server-side. Idempotent-safe the same way deleteObject already is — an
+ * already-aborted/not-found upload is a no-op success, not an error, since
+ * the abort endpoint and the stale-session cleanup job can both legitimately
+ * race to abort the same upload (spec).
+ */
+export async function abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+  try {
+    await s3.send(new AbortMultipartUploadCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId }));
+  } catch (err) {
+    const code =
+      (err as { name?: string; Code?: string })?.name ?? (err as { Code?: string })?.Code;
+    if (code === "NoSuchUpload" || code === "NoSuchKey" || code === "NotFound") {
+      return; // already gone/aborted — no-op success
     }
     throw err;
   }

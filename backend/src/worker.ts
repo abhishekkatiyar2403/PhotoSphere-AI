@@ -5,19 +5,31 @@ import path from "node:path";
 // separate process/entrypoint from the API, so it needs its own env load.
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
+import { validateEnv } from "./lib/validateEnv";
+
+// Fail fast on a misconfigured production deploy — same rationale as
+// server.ts (this is a separate process/entrypoint, so it needs its own call).
+validateEnv();
+
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import crypto from "node:crypto";
 import { promisify } from "node:util";
 import exifr from "exifr";
+import heicConvert from "heic-convert";
 import IORedis from "ioredis";
 import { Job, Worker } from "bullmq";
 import sharp from "sharp";
 import { Prisma, type Collection, type Folder, type Photo } from "@prisma/client";
-import { classify, type ClassificationResult } from "./lib/classification";
+import { classify, parseCachedDetection, type ClassificationResult } from "./lib/classification";
 import { rankCategories, UNCATEGORIZED } from "./lib/classification/categoryMapping";
-import { refinePeopleFolder, PEOPLE_FALLBACK_FOLDER } from "./lib/classification/faces";
+import { refinePeople, GROUP_FOLDER, PEOPLE_FALLBACK_FOLDER } from "./lib/classification/faces";
+import {
+  looksLikeScreenshot,
+  SCREENSHOT_DETECTION,
+  SCREENSHOT_FILENAME_PATTERN,
+} from "./lib/classification/screenshot";
 import { findExactDuplicateOriginal, findNearDuplicateOriginal } from "./lib/dedup";
 import { computePHash } from "./lib/phash";
 import { prisma } from "./lib/prisma";
@@ -26,9 +38,14 @@ import {
   PhotoProcessingJobData,
   PHOTO_PROCESSING_QUEUE_NAME,
   registerTrashPurgeJob,
+  registerUploadSessionCleanupJob,
   TRASH_PURGE_JOB_NAME,
+  UPLOAD_SESSION_CLEANUP_JOB_NAME,
 } from "./lib/queue";
 import { runTrashPurgeJob } from "./lib/trashPurgeJob";
+import { runUploadSessionCleanupJob } from "./lib/uploadSessionCleanupJob";
+import { startWorkerHeartbeat } from "./lib/workerHeartbeat";
+import { logger } from "./lib/logger";
 import { ensureBucketExists, getPresignedGetUrl, putObject } from "./lib/storage";
 import { thumbnailKey } from "./routes/photos";
 
@@ -41,7 +58,7 @@ const REKOGNITION_COMPATIBLE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
 const execFileAsync = promisify(execFile);
 
 /**
- * Fallback decoder for HEIC files sharp/libheif can't touch at all — iPhone
+ * Cross-platform HEIC fallback decoder (2026-07-13 backend audit #1) — iPhone
  * ships with Live Photo mode ON BY DEFAULT, and a Live Photo HEIC embeds
  * enough auxiliary item references (extra thumbnails, a still-frame
  * sequence) that it routinely exceeds libheif's hardcoded anti-DoS security
@@ -50,17 +67,36 @@ const execFileAsync = promisify(execFile);
  * raise it, so a meaningful fraction of ordinary iPhone photos are
  * genuinely undecodable by sharp, not just a rare edge case.
  *
- * `sips` (macOS's built-in image tool) uses Apple's OWN native HEIC decoder,
- * completely independent of libheif, and handles Apple's own Live Photo
- * format natively without issue. This is a real, working fallback FOR LOCAL
- * MAC DEVELOPMENT ONLY — `sips` doesn't exist on Linux, so this path is
- * inert (and harmless — decodeToJpeg() just falls through to the graceful-
- * degradation case below) on Railway/production. There is currently no
- * equivalent fallback for Linux; if this matters in production, the honest
- * options are a real HEIF-capable conversion service/library on that
- * platform, or accepting that some Live Photo HEICs land in Uncategorized
- * with no thumbnail there until one is wired in — flagged here rather than
- * silently assumed away.
+ * `heic-convert` (backed by `libheif-js`, a WASM build of libheif with the
+ * same anti-DoS limit REMOVED/raised) has no native dependency at all — it
+ * runs identically on macOS and Linux, unlike the `sips` fallback this
+ * replaced (macOS-only, previously a real production gap: on Railway, every
+ * HEIC upload — not just Live Photos — got no thumbnail, no classification,
+ * and landed in Uncategorized). Verified directly against a real Live Photo
+ * that reproduces the exact "iref box (48) exceeds... 16" error sharp
+ * throws: `heic-convert` decodes it cleanly into a valid 3024×4032 JPEG.
+ *
+ * A touch slower than sharp/libvips (WASM, no native SIMD) — that's exactly
+ * why it's the FALLBACK, tried only after sharp's fast path fails, not a
+ * replacement for it.
+ */
+async function decodeHeicViaWasm(buffer: Buffer): Promise<Buffer | null> {
+  try {
+    const jpegArrayBuffer = await heicConvert({ buffer, format: "JPEG", quality: 0.9 });
+    return Buffer.from(jpegArrayBuffer);
+  } catch (err) {
+    logger.error({ err }, "heic-convert (WASM) fallback also failed to decode HEIC");
+    return null;
+  }
+}
+
+/**
+ * macOS-only LAST-RESORT decode fallback, kept as belt-and-suspenders after
+ * decodeHeicViaWasm above (which now handles the vast majority of cases,
+ * including on Linux) — `sips` uses Apple's own native HEIC decoder,
+ * completely independent of libheif, so it can still recover a file that
+ * somehow defeats both sharp AND the WASM decoder. Inert (returns null
+ * immediately, harmless) on any non-macOS platform.
  */
 async function decodeHeicViaSips(buffer: Buffer): Promise<Buffer | null> {
   if (process.platform !== "darwin") return null;
@@ -75,8 +111,7 @@ async function decodeHeicViaSips(buffer: Buffer): Promise<Buffer | null> {
     await execFileAsync("sips", ["-s", "format", "jpeg", srcPath, "--out", destPath]);
     return await fs.readFile(destPath);
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("[worker] sips fallback also failed to decode HEIC:", err);
+    logger.error({ err }, "sips fallback also failed to decode HEIC");
     return null;
   } finally {
     await fs.unlink(srcPath).catch(() => {});
@@ -89,18 +124,24 @@ async function decodeHeicViaSips(buffer: Buffer): Promise<Buffer | null> {
  * needs actual re-encoded pixel data from a non-JPEG/PNG original (i.e.
  * HEIC) — classification (Rekognition only accepts JPEG/PNG), thumbnailing,
  * and pHash all share this ONE decode attempt rather than each separately
- * trying and failing against the same undecodable bytes. Tries sharp first
- * (fast, works for the majority of HEIC files); falls back to sips on
- * macOS for the Live-Photo case sharp/libheif can't handle at all (see
- * decodeHeicViaSips). Returns null (never throws) if nothing can decode it,
- * so every caller degrades gracefully instead of failing the whole pipeline.
+ * trying and failing against the same undecodable bytes.
+ *
+ * Three-tier fallback, fastest/most-common case first:
+ *   1. sharp/libvips — fast, native, works for the majority of HEIC files.
+ *   2. heic-convert (WASM libheif, no native dep — see decodeHeicViaWasm) —
+ *      the real fix for the Live-Photo iref-limit case, and the ONLY tier
+ *      that also works in production (Linux).
+ *   3. sips (macOS-only) — belt-and-suspenders last resort.
+ * Returns null (never throws) if nothing can decode it, so every caller
+ * degrades gracefully instead of failing the whole pipeline.
  */
 async function decodeToJpeg(buffer: Buffer): Promise<Buffer | null> {
   try {
     return await sharp(buffer).rotate().jpeg({ quality: 90 }).toBuffer();
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("[worker] sharp could not decode image, trying sips fallback:", err);
+    logger.error({ err }, "sharp could not decode image, trying heic-convert (WASM) fallback");
+    const wasmResult = await decodeHeicViaWasm(buffer);
+    if (wasmResult) return wasmResult;
     return decodeHeicViaSips(buffer);
   }
 }
@@ -146,8 +187,7 @@ async function extractExifViaSips(
       cameraModel: modelMatch ? modelMatch[1].trim() : null,
     };
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("[worker] sips EXIF fallback failed:", err);
+    logger.error({ err }, "sips EXIF fallback failed");
     return null;
   } finally {
     await fs.unlink(srcPath).catch(() => {});
@@ -270,42 +310,121 @@ async function findOrCreateFolder(collectionId: string, name: string): Promise<F
 }
 
 /**
+ * Resolves a face-recognition person (a Rekognition FaceId) to their folder
+ * via the person_faces registry — folder link is by ID, so a renamed person
+ * folder ("Person 1" -> "Mom") keeps receiving that person's photos. A face
+ * with no live mapping (brand-new person, or their folder was trashed/
+ * purged) gets the next "Person N" folder created and the mapping (re)pointed
+ * at it. Never re-indexes a face — identity stays 1 face = 1 registry row
+ * ((ownerId, faceId) unique).
+ */
+async function resolvePersonFolder(
+  ownerId: string,
+  collectionId: string,
+  faceId: string,
+): Promise<Folder> {
+  const existing = await prisma.personFace.findUnique({
+    where: { ownerId_faceId: { ownerId, faceId } },
+    include: { folder: true },
+  });
+  if (existing && existing.folder.deletedAt === null) {
+    return existing.folder;
+  }
+
+  // New person (or their folder is trashed — don't resurrect it, spawn a
+  // fresh one). Number from the registry size, not folder-name parsing:
+  // renamed folders make name-parsing lie.
+  const personNumber = (await prisma.personFace.count({ where: { ownerId } })) + 1;
+  const folder = await findOrCreateFolder(collectionId, `Person ${personNumber}`);
+
+  if (existing) {
+    await prisma.personFace.update({ where: { id: existing.id }, data: { folderId: folder.id } });
+  } else {
+    try {
+      await prisma.personFace.create({ data: { ownerId, faceId, folderId: folder.id } });
+    } catch (err) {
+      // Concurrent sibling job enrolled the same face first — theirs wins.
+      if (isUniqueViolation(err)) {
+        const winner = await prisma.personFace.findUnique({
+          where: { ownerId_faceId: { ownerId, faceId } },
+          include: { folder: true },
+        });
+        if (winner && winner.folder.deletedAt === null) return winner.folder;
+      } else {
+        throw err;
+      }
+    }
+  }
+  return folder;
+}
+
+/**
  * Pipeline step 5 / reclassify final step (specs/ai-classification.md §4):
  * classification result -> category -> find-or-create default collection +
  * folder -> single transaction updating the photo and reconciling both
  * folders' photoCount (never below 0).
+ *
+ * `getPixelBuffer` is LAZY — reclassify-from-cache never touches storage at
+ * all unless the photo actually ranks as People and needs face analysis.
+ * `detection` (when provided) is the raw provider result to persist as the
+ * photo's cached detection (see schema.prisma aiDetection).
  */
 async function assignPhotoToFolder(
   photo: Photo,
   result: ClassificationResult,
-  options: { clearDuplicateVerdict: boolean; pixelBuffer?: Buffer | null },
+  options: {
+    clearDuplicateVerdict: boolean;
+    getPixelBuffer?: () => Promise<Buffer | null>;
+    detection?: ClassificationResult;
+  },
 ): Promise<void> {
+  const collection = await findOrCreateDefaultCollection(photo.ownerId);
+
   const ranked = rankCategories(result);
   let rankIndex = 0;
   let category = ranked[0]?.category ?? UNCATEGORIZED;
+  let personFolder: Folder | null = null;
 
   // Face-based People refinement (lib/classification/faces.ts): a People
-  // verdict fans out into "Person N" / "Group" / plain "People" folders by
+  // verdict fans out into per-person / "Group" / plain "People" folders by
   // actually looking at the faces' SIZE in frame, not just the labels.
-  // refinePeopleFolder returns null when faces exist but none are prominent
-  // (an incidental passer-by in a street/building photo, 2026-07-10 bug) —
-  // that means "this isn't really a People photo," so fall through to the
-  // next-highest-scoring category the labels matched (e.g. Architecture)
-  // instead of defaulting into a People variant. Strictly best-effort
-  // otherwise — the no-op provider (mock mode / tests) and every face-API
-  // failure path return "People" unchanged, i.e. the pre-feature behavior.
-  while (category === PEOPLE_FALLBACK_FOLDER && options.pixelBuffer) {
-    const refined = await refinePeopleFolder(photo.ownerId, options.pixelBuffer);
-    if (refined !== null) {
-      category = refined;
-      break;
+  // A "reject" verdict (faces exist but none prominent — incidental
+  // passer-by, Bugs.md #16) means this isn't really a People photo: fall
+  // through to the next-highest-scoring category the labels matched.
+  // Everything else is strictly best-effort — the no-op provider (mock mode
+  // / tests) and every face-API failure path yield "fallback", i.e. the
+  // plain "People" folder, the pre-feature behavior.
+  while (category === PEOPLE_FALLBACK_FOLDER && options.getPixelBuffer) {
+    const pixelBuffer = await options.getPixelBuffer();
+    if (!pixelBuffer) break;
+
+    const verdict = await refinePeople(photo.ownerId, pixelBuffer);
+    if (verdict.kind === "reject") {
+      // Only fall through when the label evidence AGREES the photo isn't
+      // really about the person. A full-body/turned-away shot can fail the
+      // face-geometry test while the labels are still overwhelmingly about
+      // the subject (Pants/Jeans/Shoe/Walking... — live case 2026-07-11,
+      // where falling through landed the photo in Electronics via the
+      // subject's own headphones). If People's score at least doubles the
+      // next category's, trust the labels and keep the plain People folder.
+      const peopleScore = ranked[rankIndex]?.score ?? 0;
+      const nextScore = ranked[rankIndex + 1]?.score ?? 0;
+      if (peopleScore >= nextScore * 2) {
+        break; // stays "People"
+      }
+      rankIndex += 1;
+      category = ranked[rankIndex]?.category ?? UNCATEGORIZED;
+      continue;
     }
-    rankIndex += 1;
-    category = ranked[rankIndex]?.category ?? UNCATEGORIZED;
+    if (verdict.kind === "group") {
+      category = GROUP_FOLDER;
+    } else if (verdict.kind === "person") {
+      personFolder = await resolvePersonFolder(photo.ownerId, collection.id, verdict.faceId);
+    }
+    break; // group / person / fallback are all terminal
   }
 
-  const collection = await findOrCreateDefaultCollection(photo.ownerId);
-  const folder = await findOrCreateFolder(collection.id, category);
+  const folder = personFolder ?? (await findOrCreateFolder(collection.id, category));
 
   // Serializable + retry (see lib/serializableTransaction.ts): under plain
   // Read Committed the previousFolderId read below can be stale by the time
@@ -329,6 +448,11 @@ async function assignPhotoToFolder(
         folderId: folder.id,
         collectionId: collection.id,
         aiClassificationStatus: "done",
+        // Persist the raw detection so future reclassifies re-run only the
+        // local mapping — no repeat provider billing (aiDetection cache).
+        ...(options.detection
+          ? { aiDetection: options.detection as unknown as Prisma.InputJsonValue }
+          : {}),
         ...(options.clearDuplicateVerdict
           ? { duplicateOfPhotoId: null, dedupMethod: null }
           : {}),
@@ -349,6 +473,21 @@ async function assignPhotoToFolder(
       });
     }
   });
+}
+
+/**
+ * Header-only dimension probe for the screenshot detector — sharp reads
+ * just the image header, no pixel decode. Nulls (never a throw) when the
+ * format is unreadable; the detector treats unknown dimensions as
+ * "not a screenshot by the resolution rule" (filename rule still applies).
+ */
+async function imageDimensions(buffer: Buffer): Promise<{ width: number | null; height: number | null }> {
+  try {
+    const meta = await sharp(buffer).metadata();
+    return { width: meta.width ?? null, height: meta.height ?? null };
+  } catch {
+    return { width: null, height: null };
+  }
 }
 
 /** Applies the FORCE_LOWCONF_ hook (both job types) before mapping. */
@@ -410,8 +549,7 @@ async function processPhotoPipeline(photoId: string): Promise<void> {
       }
       thumbnailsGenerated = true;
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(`[worker] thumbnail generation failed for photo ${photoId} (continuing without one):`, err);
+      logger.error({ err, photoId }, "thumbnail generation failed (continuing without one)");
     }
   }
 
@@ -503,8 +641,7 @@ async function processPhotoPipeline(photoId: string): Promise<void> {
       duplicateOfPhotoId = await findNearDuplicateOriginal(photo, phash);
       if (duplicateOfPhotoId) dedupMethod = "phash";
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error(`[worker] pHash computation failed for photo ${photoId} (skipping near-dup check):`, err);
+      logger.error({ err, photoId }, "pHash computation failed (skipping near-dup check)");
       phash = null;
     }
   }
@@ -533,19 +670,42 @@ async function processPhotoPipeline(photoId: string): Promise<void> {
   await prisma.photo.update({ where: { id: photoId }, data: { phash } });
 
   // --- Step 4: classification (only reached for non-duplicates). ---
-  // Reuses the same shared pixelBuffer decoded above — Rekognition only
-  // accepts JPEG/PNG, so a HEIC original could never classify against its
-  // raw bytes even when sharp/sips CAN decode it, and a genuinely
-  // undecodable one (null) lands in Uncategorized (empty labels, 0
-  // confidence) same as any other low-confidence/unmappable result, rather
-  // than a dead-end "failed" status a retry could never fix.
-  const rawResult: ClassificationResult = pixelBuffer
-    ? await classify(pixelBuffer)
-    : { labels: [], confidence: 0 };
+  // SCREENSHOT SHORT-CIRCUIT first (lib/classification/screenshot.ts):
+  // screenshots are identified from metadata (filename pattern, or PNG +
+  // no camera EXIF + exact device-screen dimensions) because Rekognition
+  // has no "Screenshot" label — it would describe a screenshot by its
+  // CONTENT and misfile it. Detecting here also skips the DetectLabels
+  // call entirely (real spend saved on 10-30% of a typical phone library).
+  // The synthetic result flows through the same mapping/caching machinery
+  // as a real detection, so the verdict is durable across reclassifies.
+  //
+  // Otherwise: reuses the same shared pixelBuffer decoded above —
+  // Rekognition only accepts JPEG/PNG, so a HEIC original could never
+  // classify against its raw bytes even when sharp/sips CAN decode it, and
+  // a genuinely undecodable one (null) lands in Uncategorized (empty
+  // labels, 0 confidence) same as any other low-confidence/unmappable
+  // result, rather than a dead-end "failed" status a retry could never fix.
+  const isScreenshot = looksLikeScreenshot({
+    mimeType: photo.mimeType,
+    originalFilename: photo.originalFilename,
+    hasCameraExif: exifCameraMake !== null || exifCameraModel !== null || exifTakenAt !== null,
+    ...(await imageDimensions(originalBuffer)),
+  });
+  const rawResult: ClassificationResult = isScreenshot
+    ? { ...SCREENSHOT_DETECTION, labels: [...SCREENSHOT_DETECTION.labels] }
+    : pixelBuffer
+      ? await classify(pixelBuffer)
+      : { labels: [], confidence: 0 };
   const result = applyLowConfidenceHook(photo, rawResult);
 
   // --- Step 5: category mapping + folder auto-creation + assignment. ---
-  await assignPhotoToFolder(photo, result, { clearDuplicateVerdict: false, pixelBuffer });
+  // `detection: rawResult` persists the raw (pre-hook) provider result as
+  // the photo's cached detection — future reclassifies map from the cache.
+  await assignPhotoToFolder(photo, result, {
+    clearDuplicateVerdict: false,
+    getPixelBuffer: async () => pixelBuffer,
+    detection: rawResult,
+  });
 }
 
 /**
@@ -568,23 +728,83 @@ async function processReclassify(photoId: string): Promise<void> {
 
   // Note: no FORCE_FAIL_ check here, deliberately (see hook scoping above).
 
-  const originalBuffer = await fetchOriginalBuffer(photo.s3Key);
-
-  // Same reasoning as processPhotoPipeline's Step 4 — Rekognition only
-  // accepts JPEG/PNG, so a HEIC original needs converting first, and a
+  // Lazy, memoized decode — only ever touches storage if actually needed
+  // (live provider call below, or face refinement for a People verdict).
+  // Same HEIC reasoning as processPhotoPipeline's Step 4: Rekognition only
+  // accepts JPEG/PNG, so non-JPEG/PNG originals convert first, and a
   // genuinely undecodable one falls back to Uncategorized rather than
   // failing the reclassify attempt outright.
-  const pixelBuffer = REKOGNITION_COMPATIBLE_MIME_TYPES.has(photo.mimeType)
-    ? originalBuffer
-    : await decodeToJpeg(originalBuffer);
-  const rawResult: ClassificationResult = pixelBuffer
-    ? await classify(pixelBuffer)
-    : { labels: [], confidence: 0 };
+  let decoded: Promise<Buffer | null> | null = null;
+  const getPixelBuffer = (): Promise<Buffer | null> => {
+    decoded ??= fetchOriginalBuffer(photo.s3Key).then((originalBuffer) =>
+      REKOGNITION_COMPATIBLE_MIME_TYPES.has(photo.mimeType)
+        ? originalBuffer
+        : decodeToJpeg(originalBuffer),
+    );
+    return decoded;
+  };
+
+  // SCREENSHOT CHECK FIRST — deliberately BEFORE the detection cache: a
+  // screenshot classified before this detector existed carries a
+  // content-based cache ("Text"->Documents, "Beach"->Nature...), and
+  // replaying that cache would keep the misfile forever. Checking metadata
+  // first means a user-triggered reclassify genuinely FIXES old misfiled
+  // screenshots, and re-persists the durable Screenshot detection into the
+  // cache. Cheap: the filename/mime/EXIF pre-filter below touches only DB
+  // fields already in hand; the buffer is fetched solely for the
+  // dimensions of PNG candidates (a PNG's getPixelBuffer IS the original
+  // bytes — png is Rekognition-compatible, so no conversion happens).
+  const screenshotCandidate =
+    SCREENSHOT_FILENAME_PATTERN.test(photo.originalFilename) ||
+    (photo.mimeType === "image/png" &&
+      photo.exifCameraMake === null &&
+      photo.exifCameraModel === null &&
+      photo.exifTakenAt === null);
+
+  let rawResult: ClassificationResult | null = null;
+  let detection: ClassificationResult | undefined;
+
+  if (screenshotCandidate) {
+    const dims =
+      photo.mimeType === "image/png"
+        ? await getPixelBuffer().then((b) => (b ? imageDimensions(b) : { width: null, height: null }))
+        : { width: null, height: null };
+    const isScreenshot = looksLikeScreenshot({
+      mimeType: photo.mimeType,
+      originalFilename: photo.originalFilename,
+      hasCameraExif:
+        photo.exifCameraMake !== null || photo.exifCameraModel !== null || photo.exifTakenAt !== null,
+      ...dims,
+    });
+    if (isScreenshot) {
+      rawResult = { ...SCREENSHOT_DETECTION, labels: [...SCREENSHOT_DETECTION.labels] };
+      detection = rawResult;
+    }
+  }
+
+  // Detection-cache fast path: if this photo already carries a stored raw
+  // detection (aiDetection), reclassify re-runs ONLY the local mapping over
+  // it — zero provider calls, zero storage reads (unless faces are needed).
+  // Every mapping-rule fix so far re-billed the whole library through the
+  // provider for detections that were identical every time; now a mapping
+  // change costs nothing to roll out. Cache miss (pre-cache photos, or a
+  // first-ever classify) takes the live path and populates the cache.
+  if (!rawResult) {
+    const cached = parseCachedDetection(photo.aiDetection);
+    if (cached) {
+      rawResult = cached;
+    } else {
+      const pixelBuffer = await getPixelBuffer();
+      rawResult = pixelBuffer ? await classify(pixelBuffer) : { labels: [], confidence: 0 };
+      detection = rawResult;
+    }
+  }
   const result = applyLowConfidenceHook(photo, rawResult);
 
   await assignPhotoToFolder(photo, result, {
     clearDuplicateVerdict: photo.duplicateOfPhotoId !== null || photo.dedupMethod !== null,
-    pixelBuffer,
+    getPixelBuffer,
+    detection,
   });
 }
 
@@ -594,10 +814,19 @@ async function main() {
   // specs/trash-system.md T4: idempotent registration — safe on every boot,
   // upserts rather than duplicating the scheduled job.
   await registerTrashPurgeJob();
+  // specs/production-upload-batch.md PUB4 (DECIDED): same idempotent
+  // registration pattern, one call added alongside the existing one above —
+  // no other change to this file's worker-pipeline logic.
+  await registerUploadSessionCleanupJob();
 
   const connection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
     maxRetriesPerRequest: null,
   });
+
+  // 2026-07-13 backend audit #14: a hung/crashed worker was previously
+  // invisible — this is the ONLY liveness signal it emits (see
+  // lib/workerHeartbeat.ts; /health, in app.ts, reads it back).
+  const stopHeartbeat = startWorkerHeartbeat(connection);
 
   const worker = new Worker<PhotoProcessingJobData>(
     PHOTO_PROCESSING_QUEUE_NAME,
@@ -608,10 +837,24 @@ async function main() {
       // by-job-id bookkeeping below which assumes a photoId-carrying job.
       if (job.name === TRASH_PURGE_JOB_NAME) {
         const result = await runTrashPurgeJob();
-        // eslint-disable-next-line no-console
-        console.log(
-          `[worker] trash-purge job completed: ${result.photosPurged} photo(s), ${result.foldersPurged} folder(s) permanently purged`,
+        logger.info(
+          {
+            photosPurged: result.photosPurged,
+            foldersPurged: result.foldersPurged,
+            ...result.housekeeping,
+            ...result.staleReconciliation,
+          },
+          "trash-purge job completed",
         );
+        return;
+      }
+
+      // specs/production-upload-batch.md PUB4: same "no processing_jobs
+      // bookkeeping, no photoId" shape as the trash-purge job above — this
+      // is a batch sweep, not tied to a single Photo row.
+      if (job.name === UPLOAD_SESSION_CLEANUP_JOB_NAME) {
+        const result = await runUploadSessionCleanupJob();
+        logger.info(result, "upload-session-cleanup job completed");
         return;
       }
 
@@ -635,21 +878,27 @@ async function main() {
   );
 
   worker.on("completed", async (job) => {
-    // specs/trash-system.md T4: the purge job has no processing_jobs row and
-    // no photoId — its own success/failure logging happens inside the
-    // processor above (runTrashPurgeJob's caller), not here.
-    if (job.name === TRASH_PURGE_JOB_NAME) return;
+    // specs/trash-system.md T4 / specs/production-upload-batch.md PUB4: both
+    // repeatable sweep jobs have no processing_jobs row and no photoId —
+    // their own success/failure logging happens inside the processor above,
+    // not here.
+    if (job.name === TRASH_PURGE_JOB_NAME || job.name === UPLOAD_SESSION_CLEANUP_JOB_NAME) return;
     if (!job.id) return;
     await updateProcessingJobById(job.id, { status: "completed" });
-    // eslint-disable-next-line no-console
-    console.log(`[worker] completed ${job.name} job for photo ${(job.data as { photoId?: string }).photoId}`);
+    logger.info(
+      { jobName: job.name, photoId: (job.data as { photoId?: string }).photoId },
+      "job completed",
+    );
   });
 
   worker.on("failed", async (job, err) => {
     if (!job) return;
     if (job.name === TRASH_PURGE_JOB_NAME) {
-      // eslint-disable-next-line no-console
-      console.error(`[worker] trash-purge job failed (attempt ${job.attemptsMade}):`, err.message);
+      logger.error({ err, attempts: job.attemptsMade }, "trash-purge job failed");
+      return;
+    }
+    if (job.name === UPLOAD_SESSION_CLEANUP_JOB_NAME) {
+      logger.error({ err, attempts: job.attemptsMade }, "upload-session-cleanup job failed");
       return;
     }
     if (!job.id) return;
@@ -666,28 +915,26 @@ async function main() {
         data: { aiClassificationStatus: "failed" },
       });
     }
-    // eslint-disable-next-line no-console
-    console.error(
-      `[worker] ${job.name} job failed for photo ${photoId} (attempt ${job.attemptsMade}):`,
-      err.message,
-    );
+    logger.error({ err, jobName: job.name, photoId, attempts: job.attemptsMade }, "job failed");
   });
 
-  // eslint-disable-next-line no-console
-  console.log("[worker] listening for jobs on queue:", PHOTO_PROCESSING_QUEUE_NAME);
+  logger.info({ queue: PHOTO_PROCESSING_QUEUE_NAME }, "worker listening for jobs");
 
   process.on("SIGTERM", async () => {
+    stopHeartbeat();
     await worker.close();
+    await prisma.$disconnect();
     process.exit(0);
   });
   process.on("SIGINT", async () => {
+    stopHeartbeat();
     await worker.close();
+    await prisma.$disconnect();
     process.exit(0);
   });
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error("[worker] fatal startup error:", err);
+  logger.error({ err }, "fatal startup error");
   process.exit(1);
 });

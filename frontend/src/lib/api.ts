@@ -735,10 +735,13 @@ export const SEARCH_CATEGORIES = [
   "Architecture",
   "Nature",
   "Food",
+  "Sports",
   "Vehicles",
   "Electronics",
   "Kitchen",
   "Furniture",
+  "Art",
+  "Festivals",
   "Documents",
   "Screenshots",
   "Uncategorized",
@@ -761,6 +764,53 @@ export type SearchResponse = {
   total: number;
   limit: number;
   offset: number;
+};
+
+// --- specs/production-upload-batch.md — presigned multipart batch upload ---
+// Additive alongside photosApi.upload/uploadWithProgress above (the existing
+// single-file POST /api/photos/upload path, kept unchanged) — /upload's page
+// itself now always uses this batch flow (Open Question #8: no dual-wiring,
+// even for a single file). See lib/uploadBatch.ts for the Uppy wiring that
+// drives these three calls.
+
+export type UploadFileDescriptor = {
+  clientId: string;
+  filename: string;
+  sizeBytes: number;
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/heic";
+  sha256: string;
+};
+
+export type InitiateUploadResponse = {
+  sessionId: string;
+  files: {
+    clientId: string;
+    key: string;
+    uploadId: string;
+    partUrls: { partNumber: number; url: string }[];
+  }[];
+  duplicates: { clientId: string; existingPhotoId: string }[];
+};
+
+export type CompleteUploadResult =
+  | { clientId: string; photoId: string; status: "queued" }
+  | { clientId: string; failed: true; reason: string };
+
+export type CompleteUploadResponse = {
+  sessionId: string;
+  results: CompleteUploadResult[];
+};
+
+export const uploadApi = {
+  initiate: (files: UploadFileDescriptor[]): Promise<InitiateUploadResponse> =>
+    apiFetch("/api/upload/initiate", { method: "POST", body: JSON.stringify({ files }) }),
+  complete: (
+    sessionId: string,
+    files: { clientId: string; parts: { partNumber: number; eTag: string }[] }[],
+  ): Promise<CompleteUploadResponse> =>
+    apiFetch("/api/upload/complete", { method: "POST", body: JSON.stringify({ sessionId, files }) }),
+  abort: (sessionId: string): Promise<{ sessionId: string; aborted: true }> =>
+    apiFetch("/api/upload/abort", { method: "DELETE", body: JSON.stringify({ sessionId }) }),
 };
 
 export const searchApi = {

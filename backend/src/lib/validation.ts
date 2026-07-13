@@ -2,13 +2,43 @@ import { z } from "zod";
 
 export const signupSchema = z.object({
   email: z.string().trim().toLowerCase().email("Invalid email format"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  // max(72): bcrypt silently truncates/ignores bytes beyond 72 — enforcing
+  // this explicitly means a user never wrongly assumes a longer password is
+  // fully significant (2026-07-13 backend audit #21).
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(72, "Password must be at most 72 characters"),
   name: z.string().trim().min(1, "Name is required").max(255),
 });
 
 export const loginSchema = z.object({
   email: z.string().trim().toLowerCase().email("Invalid email format"),
   password: z.string().min(1, "Password is required"),
+});
+
+// 2026-07-13 backend audit #8: password reset + profile update.
+const NEW_PASSWORD_SCHEMA = z
+  .string()
+  .min(8, "Password must be at least 8 characters")
+  .max(72, "Password must be at most 72 characters");
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Invalid email format"),
+});
+
+export const resetPasswordSchema = z.object({
+  token: z.string().min(1, "Reset token is required"),
+  newPassword: NEW_PASSWORD_SCHEMA,
+});
+
+export const updateProfileSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(255),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Current password is required"),
+  newPassword: NEW_PASSWORD_SCHEMA,
 });
 
 export type SignupInput = z.infer<typeof signupSchema>;
@@ -152,10 +182,13 @@ export const SEARCH_CATEGORIES = [
   "Architecture",
   "Nature",
   "Food",
+  "Sports",
   "Vehicles",
   "Electronics",
   "Kitchen",
   "Furniture",
+  "Art",
+  "Festivals",
   "Documents",
   "Screenshots",
   "Uncategorized",
@@ -206,6 +239,15 @@ export const createGuestSchema = z.object({
   permissionLevel: z.enum(PERMISSION_LEVELS),
   // Optional grant expiry in days; capped at a year to keep the value sane.
   expiresInDays: z.coerce.number().int().min(1).max(365).optional(),
+});
+
+// POST /api/guests/:id/send-invite (2026-07-13, revised #9): the raw invite
+// token/URL is never persisted server-side (only its hash) — the frontend
+// passes back the exact inviteUrl it already received from the create
+// response, and this just triggers the email send for it. `.max(2048)` is a
+// sanity bound, not a real constraint (a real invite URL is ~100 chars).
+export const sendGuestInviteSchema = z.object({
+  inviteUrl: z.string().trim().min(1).max(2048),
 });
 
 // GET /api/access-requests — optional status filter (default 'pending').
@@ -282,3 +324,76 @@ export const auditQuerySchema = z.object({
 });
 
 export type AuditQuery = z.infer<typeof auditQuerySchema>;
+
+// --- specs/production-upload-batch.md — presigned multipart batch upload ---
+
+// PUB1 (DECIDED default): a round number covering Abhishek's stated 500-1000
+// upload need. MAX_UPLOAD_BYTES mirrors upload-pipeline.md's existing 50MB
+// per-file ceiling (routes/photos.ts's MAX_UPLOAD_BYTES) — reused, not
+// re-litigated, so batch and single-file uploads share one size policy.
+export const MAX_BATCH_FILES = 1000;
+const MAX_BATCH_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+
+const ALLOWED_UPLOAD_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic"] as const;
+
+// Per-file descriptor the browser declares at initiate time. `clientId` is a
+// caller-generated correlation id (crypto.randomUUID() client-side) — a
+// filename alone isn't a safe key since two selected files can share a name.
+// The client-declared `sha256`/`mimeType` here are NOT trusted for anything
+// beyond duplicate pre-checking and part-URL issuance — the real content-sniff
+// happens post-assembly in /complete (same posture as the single-file route,
+// just necessarily moved later since the backend never holds the bytes here).
+const fileDescriptorSchema = z.object({
+  clientId: z.string().trim().min(1, "clientId is required").max(255),
+  filename: z.string().trim().min(1, "filename is required").max(255),
+  sizeBytes: z
+    .number()
+    .int()
+    .positive("sizeBytes must be positive")
+    .max(MAX_BATCH_FILE_SIZE_BYTES, "Each file must be 50MB or smaller"),
+  mimeType: z.enum(ALLOWED_UPLOAD_MIME_TYPES),
+  sha256: z
+    .string()
+    .trim()
+    .regex(/^[a-f0-9]{64}$/i, "sha256 must be a 64-character hex digest"),
+  exifTakenAt: z.string().trim().optional(),
+});
+
+export const initiateUploadSchema = z.object({
+  files: z
+    .array(fileDescriptorSchema)
+    .min(1, "files must not be empty")
+    .max(MAX_BATCH_FILES, `files must not exceed ${MAX_BATCH_FILES}`),
+  collectionId: z.string().uuid().optional(),
+});
+
+const completedFilePartSchema = z.object({
+  partNumber: z.number().int().positive(),
+  eTag: z.string().trim().min(1, "eTag is required"),
+});
+
+// POST /api/upload/complete — the client echoes back clientId (looked up
+// against UploadSessionFile, PUB7) + the parts it uploaded; key/uploadId are
+// NEVER accepted directly from the client (server looks them up by
+// sessionId+clientId, scoped to the owner) so a buggy/malicious client can't
+// reference an arbitrary S3 key/uploadId pair.
+export const completeUploadSchema = z.object({
+  sessionId: z.string().uuid("sessionId must be a UUID"),
+  files: z
+    .array(
+      z.object({
+        clientId: z.string().trim().min(1, "clientId is required").max(255),
+        parts: z.array(completedFilePartSchema).min(1, "parts must not be empty"),
+      }),
+    )
+    .min(1, "files must not be empty")
+    .max(MAX_BATCH_FILES, `files must not exceed ${MAX_BATCH_FILES}`),
+});
+
+export const abortUploadSchema = z.object({
+  sessionId: z.string().uuid("sessionId must be a UUID"),
+});
+
+export type InitiateUploadInput = z.infer<typeof initiateUploadSchema>;
+export type CompleteUploadInput = z.infer<typeof completeUploadSchema>;
+export type AbortUploadInput = z.infer<typeof abortUploadSchema>;
