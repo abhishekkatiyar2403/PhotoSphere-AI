@@ -37,6 +37,15 @@ function makeKey(file: File, index: number) {
   return `${file.name}-${file.size}-${file.lastModified}-${index}-${Date.now()}`;
 }
 
+// Browsers can't decode HEIC/HEIF in an <img>, so an object URL for those
+// files renders as a blank/broken square. Detect them (by MIME when the OS
+// provides one, by extension otherwise — drag-drop often has an empty type)
+// and show a labeled placeholder until the backend's JPEG thumbnail arrives.
+function isBrowserRenderable(file: File): boolean {
+  if (/^image\/hei[cf]/i.test(file.type)) return false;
+  return !/\.hei[cf]$/i.test(file.name);
+}
+
 // The design shows "{pct}%" while a file is in flight and "Tagged ✓" once
 // done; real backend terminal states that the mock doesn't have (duplicate/
 // failed) keep a minimal one-word label.
@@ -276,7 +285,7 @@ export default function UploadV2Page() {
             background: "color-mix(in oklab, var(--ps2-accent) 16%, transparent)",
             display: "grid",
             placeItems: "center",
-            animation: "ps2FloatY 4.5s ease-in-out infinite",
+            animation: "ps2Float 4.5s ease-in-out infinite",
           }}
         >
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--ps2-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -307,11 +316,33 @@ export default function UploadV2Page() {
                 animation: "ps2Up .5s both",
               }}
             >
-              <img
-                src={item.thumbnailUrl ?? item.previewUrl}
-                alt=""
-                style={{ width: 46, height: 46, borderRadius: 10, objectFit: "cover" }}
-              />
+              {item.thumbnailUrl || isBrowserRenderable(item.file) ? (
+                <img
+                  src={item.thumbnailUrl ?? item.previewUrl}
+                  alt=""
+                  style={{ width: 46, height: 46, borderRadius: 10, objectFit: "cover" }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 46,
+                    height: 46,
+                    borderRadius: 10,
+                    flex: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "color-mix(in oklab, var(--ps2-text) 8%, transparent)",
+                    border: "1px solid var(--ps2-border)",
+                    fontSize: 9,
+                    fontWeight: 700,
+                    letterSpacing: "0.06em",
+                    color: "var(--ps2-muted)",
+                  }}
+                >
+                  HEIC
+                </div>
+              )}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 7 }}>
                   <span style={{ fontWeight: 600 }}>{item.file.name}</span>

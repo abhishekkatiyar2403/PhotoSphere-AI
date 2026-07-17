@@ -23,6 +23,12 @@ frontend/ios/App/build/
 frontend/ios/App/App.xcworkspace/xcuserdata/
 frontend/ios/App/App.xcodeproj/xcuserdata/
 frontend/ios/App/App/public/
+frontend-v2/android/.certs/
+frontend-v2/android/local.properties
+frontend-v2/android/**/build/
+frontend-v2/android/.gradle/
+frontend-v2/android/captures/
+frontend-v2/android/.idea/
 
 # Local session tooling + pulled Railway config (may carry credentials)
 .agents/
