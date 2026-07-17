@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- U1 Option A: Modal over /organize, single form -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Organize</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Dimmed page behind (organize sidebar hint) -->
+  <rect x="0" y="48" width="220" height="552" fill="#eef1f6"/>
+  <text x="16" y="76" font-size="12" fill="#c2c8d4" font-weight="bold">MY PHOTOS</text>
+  <text x="18" y="108" font-size="13" fill="#c2c8d4">Food · People · Nature …</text>
+  <rect x="240" y="96" width="520" height="130" rx="6" fill="#eef1f6"/>
+  <text x="260" y="170" font-size="12" fill="#c2c8d4">(dimmed grid behind modal)</text>
+
+  <!-- Scrim -->
+  <rect x="0" y="48" width="800" height="552" fill="#1b2440" opacity="0.28"/>
+
+  <!-- Modal -->
+  <rect x="200" y="86" width="400" height="452" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="224" y="118" font-size="16" fill="#222" font-weight="bold">Share folders with a guest</text>
+  <text x="560" y="116" font-size="16" fill="#8a90a0">×</text>
+  <line x1="200" y1="132" x2="600" y2="132" stroke="#eef1f6"/>
+
+  <!-- Guest email -->
+  <text x="224" y="156" font-size="11" fill="#8a90a0" font-weight="bold">GUEST EMAIL</text>
+  <rect x="224" y="164" width="352" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="234" y="184" font-size="12" fill="#a0a6b5">client@example.com</text>
+
+  <!-- Folder multi-select -->
+  <text x="224" y="222" font-size="11" fill="#8a90a0" font-weight="bold">FOLDERS TO SHARE</text>
+  <rect x="224" y="230" width="352" height="120" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <!-- checked -->
+  <rect x="234" y="240" width="14" height="14" rx="3" fill="#3057d5"/>
+  <text x="237" y="251" font-size="10" fill="#ffffff">✓</text>
+  <text x="256" y="252" font-size="12" fill="#333">Food</text><text x="540" y="252" font-size="11" fill="#8a90a0">12</text>
+  <rect x="234" y="264" width="14" height="14" rx="3" fill="#3057d5"/>
+  <text x="237" y="275" font-size="10" fill="#ffffff">✓</text>
+  <text x="256" y="276" font-size="12" fill="#333">Nature</text><text x="540" y="276" font-size="11" fill="#8a90a0">8</text>
+  <rect x="234" y="288" width="14" height="14" rx="3" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="256" y="300" font-size="12" fill="#333">People</text><text x="540" y="300" font-size="11" fill="#8a90a0">34</text>
+  <rect x="234" y="312" width="14" height="14" rx="3" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="256" y="324" font-size="12" fill="#333">Animals</text><text x="540" y="324" font-size="11" fill="#8a90a0">5</text>
+  <text x="234" y="345" font-size="10" fill="#1b3a9e">2 of 4 folders selected</text>
+
+  <!-- Permission + expiry row -->
+  <text x="224" y="378" font-size="11" fill="#8a90a0" font-weight="bold">PERMISSION</text>
+  <rect x="224" y="386" width="170" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="234" y="406" font-size="12" fill="#333">Download ▾</text>
+  <text x="410" y="378" font-size="11" fill="#8a90a0" font-weight="bold">EXPIRES</text>
+  <rect x="410" y="386" width="166" height="30" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="420" y="406" font-size="12" fill="#333">In 7 days ▾</text>
+
+  <!-- Create button -->
+  <rect x="224" y="436" width="352" height="34" rx="5" fill="#3057d5"/>
+  <text x="336" y="458" font-size="13" fill="#ffffff" font-weight="bold">Create invite link</text>
+
+  <!-- Result link (post-create state overlay) -->
+  <rect x="224" y="480" width="352" height="42" rx="5" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="234" y="497" font-size="10" fill="#1b3a9e" font-weight="bold">INVITE LINK (copy &amp; send to guest)</text>
+  <text x="234" y="514" font-size="11" fill="#1b3a9e">…/g/xK92mPqL7</text>
+  <rect x="496" y="490" width="70" height="24" rx="4" fill="#3057d5"/>
+  <text x="512" y="507" font-size="11" fill="#ffffff">Copy</text>
+
+  <!-- Footnote -->
+  <text x="24" y="560" font-size="10" fill="#8a90a0">U1 Option A — modal launched from a "Share" button on /organize. One compact form; folder checklist reuses the</text>
+  <text x="24" y="574" font-size="10" fill="#8a90a0">real folder list. Fastest to reach, lowest nav cost, but cramped when a user has many folders. Link appears in place.</text>
+</svg>

@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- Trash Option A: dedicated /trash page, own top-bar entry, Photos/Folders tabs -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar with nav incl. Trash entry -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI</text>
+  <text x="230" y="30" fill="#cdd8f7" font-size="11">Upload</text>
+  <text x="290" y="30" fill="#cdd8f7" font-size="11">Organize</text>
+  <text x="365" y="30" fill="#cdd8f7" font-size="11">Browse</text>
+  <text x="425" y="30" fill="#cdd8f7" font-size="11">Search</text>
+  <text x="485" y="30" fill="#cdd8f7" font-size="11">Guests</text>
+  <text x="545" y="30" fill="#cdd8f7" font-size="11">Activity</text>
+  <text x="605" y="30" fill="#ffffff" font-size="11" font-weight="bold" text-decoration="underline">Trash</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Header + Empty trash -->
+  <text x="24" y="78" font-size="16" fill="#222" font-weight="bold">Trash</text>
+  <text x="24" y="96" font-size="10" fill="#8a90a0">Items are permanently purged automatically after 7 days.</text>
+  <rect x="654" y="62" width="122" height="26" rx="5" fill="#f3e2e2" stroke="#e2b6b6"/>
+  <text x="666" y="79" font-size="11" fill="#9a5555" font-weight="bold">Empty trash…</text>
+
+  <!-- Tabs -->
+  <rect x="24" y="108" width="90" height="28" rx="6" fill="#e8eefc"/>
+  <text x="46" y="126" font-size="12" fill="#1b3a9e" font-weight="bold">Photos</text>
+  <text x="128" y="126" font-size="12" fill="#8a90a0">Folders</text>
+  <line x1="24" y1="142" x2="776" y2="142" stroke="#eef1f6"/>
+
+  <!-- Photo row, urgent (1 day left) -->
+  <rect x="24" y="154" width="752" height="56" rx="8" fill="#ffffff" stroke="#e2b6b6"/>
+  <rect x="36" y="164" width="46" height="36" rx="4" fill="#dfe3ea"/>
+  <text x="94" y="180" font-size="12" fill="#222" font-weight="bold">IMG_0921.jpg</text>
+  <text x="94" y="196" font-size="10" fill="#8a90a0">from "Vacation 2026" · deleted 6 days ago</text>
+  <rect x="560" y="172" width="72" height="20" rx="9" fill="#f3e2e2"/>
+  <text x="570" y="186" font-size="10" fill="#9a5555" font-weight="bold">1 day left</text>
+  <rect x="642" y="172" width="66" height="22" rx="4" fill="#3057d5"/>
+  <text x="652" y="187" font-size="11" fill="#ffffff" font-weight="bold">Recover</text>
+  <rect x="714" y="172" width="52" height="22" rx="4" fill="#ffffff" stroke="#c46b6b"/>
+  <text x="720" y="187" font-size="9" fill="#9a5555" font-weight="bold">Delete forever</text>
+
+  <!-- Photo row, normal (6 days left) -->
+  <rect x="24" y="216" width="752" height="56" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="36" y="226" width="46" height="36" rx="4" fill="#dfe3ea"/>
+  <text x="94" y="242" font-size="12" fill="#222" font-weight="bold">IMG_1050.jpg</text>
+  <text x="94" y="258" font-size="10" fill="#8a90a0">from "Nature" · deleted 1 day ago</text>
+  <rect x="560" y="234" width="80" height="20" rx="9" fill="#eef1f6"/>
+  <text x="570" y="248" font-size="10" fill="#5a6070" font-weight="bold">6 days left</text>
+  <rect x="642" y="234" width="66" height="22" rx="4" fill="#3057d5"/>
+  <text x="652" y="249" font-size="11" fill="#ffffff" font-weight="bold">Recover</text>
+  <rect x="714" y="234" width="52" height="22" rx="4" fill="#ffffff" stroke="#c46b6b"/>
+  <text x="720" y="249" font-size="9" fill="#9a5555" font-weight="bold">Delete forever</text>
+
+  <!-- Folders tab preview row (shown collapsed below, illustrating both sections exist) -->
+  <text x="24" y="300" font-size="11" fill="#8a90a0" font-weight="bold">FOLDERS TAB (same page, switch above)</text>
+
+  <!-- Folder row -->
+  <rect x="24" y="312" width="752" height="56" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="40" y="334" font-size="12" fill="#222" font-weight="bold">📁 Food</text>
+  <text x="40" y="352" font-size="10" fill="#8a90a0">12 photos · deleted 3 days ago</text>
+  <rect x="560" y="328" width="80" height="20" rx="9" fill="#eef1f6"/>
+  <text x="570" y="342" font-size="10" fill="#5a6070" font-weight="bold">4 days left</text>
+  <rect x="642" y="328" width="66" height="22" rx="4" fill="#3057d5"/>
+  <text x="652" y="343" font-size="11" fill="#ffffff" font-weight="bold">Recover</text>
+  <rect x="714" y="328" width="52" height="22" rx="4" fill="#ffffff" stroke="#c46b6b"/>
+  <text x="720" y="343" font-size="9" fill="#9a5555" font-weight="bold">Delete forever</text>
+
+  <!-- Restore-collision state on a folder -->
+  <rect x="24" y="378" width="752" height="96" rx="8" fill="#f3e2e2" stroke="#e2b6b6"/>
+  <rect x="24" y="378" width="6" height="96" rx="3" fill="#c46b6b"/>
+  <text x="44" y="400" font-size="12" fill="#9a5555" font-weight="bold">Can't recover "Nature" — a folder named "Nature" already exists</text>
+  <text x="44" y="418" font-size="10" fill="#9a5555">You created a new "Nature" folder after trashing this one. Choose how to bring this back:</text>
+  <rect x="44" y="428" width="180" height="26" rx="5" fill="#3057d5"/>
+  <text x="56" y="446" font-size="11" fill="#ffffff" font-weight="bold">Merge into existing "Nature"</text>
+  <rect x="236" y="428" width="220" height="26" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="248" y="446" font-size="11" fill="#5a6070">Rename &amp; restore as "Nature (2)"</text>
+
+  <!-- Empty-trash confirm, stronger, irreversible -->
+  <rect x="220" y="486" width="380" height="76" rx="10" fill="#ffffff" stroke="#c46b6b" stroke-width="2"/>
+  <text x="240" y="510" font-size="12" fill="#9a5555" font-weight="bold">Empty trash? This cannot be undone.</text>
+  <text x="240" y="528" font-size="10" fill="#333">Permanently deletes 2 photos and 1 folder right now.</text>
+  <rect x="240" y="536" width="120" height="20" rx="4" fill="#b05555"/>
+  <text x="252" y="550" font-size="10" fill="#ffffff" font-weight="bold">Empty trash now</text>
+
+  <!-- Footnote -->
+  <text x="24" y="586" font-size="10" fill="#8a90a0">Option A — a dedicated /trash page (own top-bar entry, mirrors /activity, /search). Photos/Folders tabs, per-item</text>
+</svg>

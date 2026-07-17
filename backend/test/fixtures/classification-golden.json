@@ -1,0 +1,261 @@
+{
+  "$comment": "Golden classification set — every entry is a REAL detection (labels exactly as Rekognition returned them for Abhishek's actual photos, or the mock's fixture sets) paired with the folder it must map to. classification.golden.test.ts runs the local mapping over this file (zero API calls, zero images) and fails on ANY regression. Every case cites the Bugs.md entry that made it matter. When a mapping bug is fixed, ADD ITS CASE HERE — that's what makes the fix permanent.",
+  "cases": [
+    {
+      "name": "lion on rock (bug #13: was dumped in Nature)",
+      "labels": ["Animal", "Lion", "Mammal", "Wildlife", "Bear", "Outdoors", "Canine", "Dog", "Pet", "Nature", "Zoo", "Field", "Grassland", "Savanna"],
+      "confidence": 1.0,
+      "expected": "Animals"
+    },
+    {
+      "name": "zebra in grassland (bug #13: 9 scenery labels vs 5 animal labels — weighting must hold)",
+      "labels": ["Animal", "Mammal", "Wildlife", "Zebra", "Field", "Grassland", "Nature", "Outdoors", "Grass", "Savanna", "Countryside", "Grazing", "Horse", "Ranch", "Pasture"],
+      "confidence": 1.0,
+      "expected": "Animals"
+    },
+    {
+      "name": "river with hallucinated 'Shark' at 55% (bug #15: weak label must not hijack)",
+      "labels": ["Outdoors", "Nature", "Lagoon", "Lake", "Water", "River", "Landscape", "Scenery", "Canal", "Grass", "Shark", "Sea", "Grassland", "Horizon", "Reservoir"],
+      "confidence": 1.0,
+      "labelConfidences": [0.99, 0.99, 0.98, 0.98, 0.98, 0.97, 0.96, 0.96, 0.9, 0.88, 0.55, 0.85, 0.84, 0.8, 0.78],
+      "expected": "Nature"
+    },
+    {
+      "name": "shore temple (bug #13: was People/Nature)",
+      "labels": ["Temple", "Nature", "Outdoors", "Scenery", "Pagoda", "Prayer", "Shrine", "Landscape", "Summer", "Panoramic", "City", "Ruins", "Gold", "Monument", "Desert"],
+      "confidence": 1.0,
+      "expected": "Architecture"
+    },
+    {
+      "name": "CST terminus with incidental person label (bug #15: one 'Person' must lose to the building)",
+      "labels": ["Architecture", "Building", "Car", "Transportation", "Vehicle", "Landmark", "Person", "Chhatrapati Shivaji Maharaj Terminus"],
+      "confidence": 0.99,
+      "expected": "Architecture"
+    },
+    {
+      "name": "Marine Drive street scene (bugs #15/#16: incidental person, city backdrop)",
+      "labels": ["Utility Pole", "Person", "Building", "Electrical Device", "Tower", "Antenna", "Palm Tree", "Tree", "City", "Summer", "Urban", "Hotel", "Nature", "Outdoors", "Parabolic Antennas"],
+      "confidence": 0.96,
+      "expected": "Architecture"
+    },
+    {
+      "name": "beach with passer-by, bird, bicycle (bug #15: three weak hijackers at once)",
+      "labels": ["Summer", "Nature", "Outdoors", "Sea", "Water", "Beach", "Shoreline", "Person", "Tree", "Sky", "Bird", "Palm Tree", "Wheel", "Vacation", "Bicycle"],
+      "confidence": 1.0,
+      "expected": "Nature"
+    },
+    {
+      "name": "real portrait, man in hoodie from behind (bug #15: genuine People photo must WIN)",
+      "labels": ["Knitwear", "Sweater", "Sweatshirt", "Hoodie", "Long Sleeve", "Sleeve", "Back", "Person", "Adult", "Male", "Man", "Hood", "Fleece", "Sea", "Pants"],
+      "confidence": 1.0,
+      "expected": "People"
+    },
+    {
+      "name": "OnePlus phone product shot (bug #17: was Uncategorized)",
+      "labels": ["Electronics", "Phone", "Mobile Phone", "Disk", "Iphone", "Ipod", "Camera", "Green", "Computer Hardware", "Hardware"],
+      "confidence": 1.0,
+      "expected": "Electronics"
+    },
+    {
+      "name": "iPhone product shot (bug #17)",
+      "labels": ["Electronics", "Mobile Phone", "Phone", "Iphone"],
+      "confidence": 1.0,
+      "expected": "Electronics"
+    },
+    {
+      "name": "MacBook product shot (bug #17)",
+      "labels": ["Computer", "Electronics", "Laptop", "Pc", "Screen", "Computer Hardware", "Hardware", "Blackboard", "Monitor", "Art", "Painting"],
+      "confidence": 1.0,
+      "expected": "Electronics"
+    },
+    {
+      "name": "red headphones (bug #17)",
+      "labels": ["Electronics", "Headphones", "Electrical Device", "Microphone"],
+      "confidence": 1.0,
+      "expected": "Electronics"
+    },
+    {
+      "name": "laptop on a beach (bug #17: subject beats scenic backdrop)",
+      "labels": ["Computer", "Electronics", "Laptop", "Pc", "Computer Hardware", "Hardware", "Monitor", "Screen", "Computer Keyboard", "Nature", "Outdoors", "Sky", "Sunrise", "Water", "Waterfront"],
+      "confidence": 1.0,
+      "expected": "Electronics"
+    },
+    {
+      "name": "armchair (bug #18: was lumped into 'Home')",
+      "labels": ["Furniture", "Chair", "Armchair", "Couch", "Cushion", "Home Decor"],
+      "confidence": 1.0,
+      "expected": "Furniture"
+    },
+    {
+      "name": "coffee table in living room (bug #18)",
+      "labels": ["Coffee Table", "Furniture", "Table", "Indoors", "Living Room", "Couch", "Home Decor", "Tabletop", "Interior Design", "Dining Table", "Dining Room", "Rug", "Ottoman", "Corner", "Floor"],
+      "confidence": 1.0,
+      "expected": "Furniture"
+    },
+    {
+      "name": "wooden bench (bug #18)",
+      "labels": ["Bench", "Furniture", "Wood", "Hardwood", "Crib", "Infant Bed", "Stained Wood", "Couch", "Park Bench", "Plywood"],
+      "confidence": 1.0,
+      "expected": "Furniture"
+    },
+    {
+      "name": "cookware set (bug #18: was lumped into 'Home')",
+      "labels": ["Cookware", "Pot", "Cooking Pan", "Smoke Pipe", "Electrical Device", "Cooking Pot", "Food", "Appliance", "Device", "Cutlery", "Cooker", "Spoon", "Bowl", "Steamer", "Slow Cooker"],
+      "confidence": 1.0,
+      "expected": "Kitchen"
+    },
+    {
+      "name": "cutlery close-up (bug #18: one 'Electrical Device' must not make it Electronics)",
+      "labels": ["Cutlery", "Spoon", "Fork", "Smoke Pipe", "Appliance", "Blow Dryer", "Device", "Electrical Device", "Silver", "Chart", "Plot", "Glass", "Measurements"],
+      "confidence": 1.0,
+      "expected": "Kitchen"
+    },
+    {
+      "name": "wooden utensils in holder (bug #18: the reported photo)",
+      "labels": ["Cutlery", "Spoon", "Wooden Spoon", "Kitchen Utensil", "Utensil", "Wood"],
+      "confidence": 1.0,
+      "expected": "Kitchen"
+    },
+    {
+      "name": "mock fixture: People beats Nature (spec AC, mock label set)",
+      "labels": ["Person", "Outdoor"],
+      "confidence": 0.8,
+      "expected": "People"
+    },
+    {
+      "name": "mock fixture: Food",
+      "labels": ["Food", "Meal"],
+      "confidence": 0.8,
+      "expected": "Food"
+    },
+    {
+      "name": "mock fixture: Documents",
+      "labels": ["Document", "Text"],
+      "confidence": 0.8,
+      "expected": "Documents"
+    },
+    {
+      "name": "mock fixture: Nature aliases",
+      "labels": ["Landscape", "Nature"],
+      "confidence": 0.8,
+      "expected": "Nature"
+    },
+    {
+      "name": "mock fixture: Animals",
+      "labels": ["Dog", "Animal"],
+      "confidence": 0.8,
+      "expected": "Animals"
+    },
+    {
+      "name": "mock fixture: Vehicles",
+      "labels": ["Car", "Truck"],
+      "confidence": 0.8,
+      "expected": "Vehicles"
+    },
+    {
+      "name": "mock fixture: unmappable -> Uncategorized (no taxonomy data)",
+      "labels": ["Abstract", "Pattern"],
+      "confidence": 0.8,
+      "expected": "Uncategorized"
+    },
+    {
+      "name": "below confidence threshold -> Uncategorized regardless of labels (spec AC)",
+      "labels": ["Dog", "Animal"],
+      "confidence": 0.59,
+      "expected": "Uncategorized"
+    },
+    {
+      "name": "exactly at threshold (0.60) IS categorized (spec AC, strict less-than)",
+      "labels": ["Dog", "Animal"],
+      "confidence": 0.6,
+      "expected": "Animals"
+    },
+    {
+      "name": "dynamic taxonomy fallback: cricket gear mints 'Sports' (bug #17 mechanism; Sports became a curated category 2026-07-12, so this now also exercises the curated path directly, not just the fallback)",
+      "labels": ["Cricket Bat", "Sport"],
+      "confidence": 0.98,
+      "labelConfidences": [0.98, 0.95],
+      "labelTaxonomies": [["Sports and Fitness"], ["Sports and Fitness"]],
+      "expected": "Sports"
+    },
+    {
+      "name": "dynamic taxonomy fallback: noise-only taxonomy stays Uncategorized",
+      "labels": ["Maroon", "Texture"],
+      "confidence": 0.95,
+      "labelConfidences": [0.95, 0.9],
+      "labelTaxonomies": [["Colors and Visual Compositions"], ["Patterns and Shapes"]],
+      "expected": "Uncategorized"
+    },
+    {
+      "name": "taxonomy granularity: kitchen-and-dining branch never merges into Home (bug #18 rule)",
+      "labels": ["Ladle"],
+      "confidence": 0.9,
+      "labelConfidences": [0.9],
+      "labelTaxonomies": [["Kitchen and Dining"]],
+      "expected": "Kitchen"
+    },
+    {
+      "name": "taxonomy granularity: furniture branch never merges into Home (bug #18 rule)",
+      "labels": ["Chaise Longue"],
+      "confidence": 0.9,
+      "labelConfidences": [0.9],
+      "labelTaxonomies": [["Furniture and Furnishings"]],
+      "expected": "Furniture"
+    },
+    {
+      "name": "per-label confidence floor: sub-75% labels never vote (bug #15 mechanism)",
+      "labels": ["Shark", "Water", "Nature"],
+      "confidence": 0.99,
+      "labelConfidences": [0.74, 0.99, 0.98],
+      "expected": "Nature"
+    },
+    {
+      "name": "2026-07-12 accuracy audit S2: plated home meal with tableware must win Food, not Kitchen (conditional tableware demotion)",
+      "labels": ["Food", "Meal", "Dish", "Plate", "Bowl", "Curry", "Cutlery", "Spoon", "Dining Table", "Lunch", "Platter"],
+      "confidence": 1.0,
+      "labelConfidences": [1.0, 0.95, 0.94, 0.93, 0.92, 0.9, 0.85, 0.82, 0.8, 0.78, 0.68],
+      "expected": "Food"
+    },
+    {
+      "name": "2026-07-12 audit: bare dishware product shot (NO food label) stays Kitchen at full tableware weight",
+      "labels": ["Plate", "Bowl", "Cup", "Tableware", "Ceramic"],
+      "confidence": 0.95,
+      "labelConfidences": [0.95, 0.93, 0.9, 0.85, 0.8],
+      "expected": "Kitchen"
+    },
+    {
+      "name": "2026-07-12 accuracy audit S21: person holding their dog must win People, not Animals (animal-synonym clustering)",
+      "labels": ["Person", "Adult", "Woman", "Dog", "Canine", "Animal", "Mammal", "Pet"],
+      "confidence": 0.99,
+      "labelConfidences": [0.99, 0.97, 0.96, 0.99, 0.99, 0.98, 0.98, 0.98],
+      "expected": "People"
+    },
+    {
+      "name": "2026-07-12 accuracy audit S16: painting of a landscape must win Art, not Nature (curated Art category, fixes the curated/fallback starvation trap)",
+      "labels": ["Art", "Painting", "Canvas", "Modern Art", "Mountain", "Nature", "Tree"],
+      "confidence": 0.97,
+      "labelConfidences": [0.97, 0.96, 0.85, 0.8, 0.82, 0.78, 0.76],
+      "expected": "Art"
+    },
+    {
+      "name": "2026-07-12 accuracy audit S18: indoor Christmas tree must win Festivals, not Nature (curated Festivals category)",
+      "labels": ["Christmas Tree", "Tree", "Plant", "Ornament", "Christmas Decorations", "Festival"],
+      "confidence": 0.99,
+      "labelConfidences": [0.99, 0.95, 0.92, 0.88, 0.85, 0.8],
+      "expected": "Festivals"
+    },
+    {
+      "name": "2026-07-12 audit: Nature vote cap keeps a real subject winning even against a dozen stacked scenery labels (zebra case's original fragility)",
+      "labels": ["Animal", "Mammal", "Wildlife", "Zebra", "Field", "Grassland", "Nature", "Outdoors", "Grass", "Savanna", "Countryside", "Grazing", "Horse", "Ranch", "Pasture"],
+      "confidence": 1.0,
+      "expected": "Animals"
+    },
+    {
+      "name": "2026-07-12 audit: motorbike on a scenic mountain road must win Vehicles even with 6 scenery labels present (Nature vote cap headroom)",
+      "labels": ["Motorcycle", "Vehicle", "Transportation", "Mountain", "Mountain Range", "Nature", "Outdoors", "Scenery", "Countryside", "Sky"],
+      "confidence": 0.99,
+      "labelConfidences": [0.99, 0.99, 0.99, 0.92, 0.88, 0.88, 0.88, 0.85, 0.76, 0.85],
+      "expected": "Vehicles"
+    }
+  ]
+}

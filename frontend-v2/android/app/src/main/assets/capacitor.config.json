@@ -1,0 +1,9 @@
+{
+	"appId": "com.photosphereai.app",
+	"appName": "PhotoSphere AI",
+	"webDir": "out",
+	"server": {
+		"url": "http://10.10.144.146:3000",
+		"cleartext": true
+	}
+}

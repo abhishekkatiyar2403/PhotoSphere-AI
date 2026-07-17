@@ -1,0 +1,521 @@
+// PhotoSphere AI - Prisma schema (auth-relevant tables only for this pass)
+// See specs/auth.md for the schema rationale, especially the `sessions` table
+// which is added here because the roadmap's §6 schema never defines an
+// owner-session table despite the "opaque token in DB" rule being stated in prose.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// specs/plan-tiered-upload.md PTU1 (RESOLVED, Abhishek 2026-07-13): promoted
+// from a plain String to a real enum now that ≥4 call sites branch on its
+// value (lib/plans.ts's three lookup maps, /api/upload/initiate's batch-cap
+// check, both photoProcessingQueue.add priority call sites, the new
+// PATCH /api/auth/plan switcher) — eliminates the "Studio"/"studio"/"premium"
+// typo class at both the TS and Postgres level. Every existing row was
+// already exactly "free" at migration time (confirmed via psql), so this is
+// a clean promotion with no data-fix migration needed.
+enum Plan {
+  free
+  pro
+  studio
+}
+
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  passwordHash      String   @map("password_hash")
+  name              String
+  plan              Plan     @default(free)
+  storageUsedBytes  BigInt   @default(0) @map("storage_used_bytes")
+  storageLimitBytes BigInt   @default(5368709120) @map("storage_limit_bytes")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  photos              Photo[]
+  collections         Collection[]
+  // Back-relation only (specs/guest-access-otp.md §1). No physical column
+  // added to `users` — the FK lives on guest_users.created_by.
+  guestsInvited GuestUser[] @relation("GuestsInvited")
+  personFaces   PersonFace[]
+  // specs/production-upload-batch.md — batch upload sessions.
+  uploadSessions UploadSession[]
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// specs/production-upload-batch.md — presigned multipart batch upload.
+// Additive only; the existing single-file POST /api/photos/upload path
+// (Photo/ProcessingJob rows above) is completely untouched by either model
+// below. A completed batch item is created as a plain Photo row with no
+// back-reference to the UploadSession it came from (spec Open Question 5,
+// accepted trade-off) — only these two rows track batch-level progress.
+// ---------------------------------------------------------------------------
+
+// One row per initiated batch (POST /api/upload/initiate). Tracks
+// aggregate progress only — per-file bookkeeping (S3 key/uploadId) lives in
+// UploadSessionFile below (PUB7, DECIDED: a companion table, not a
+// client-trusted payload).
+model UploadSession {
+  id             String    @id @default(uuid())
+  ownerId        String    @map("owner_id")
+  collectionId   String?   @map("collection_id") // same nullable/unused-until-Collections-CRUD posture as Photo.collectionId
+  totalFiles     Int       @map("total_files")
+  completedFiles Int       @default(0) @map("completed_files")
+  failedFiles    Int       @default(0) @map("failed_files")
+  totalBytes     BigInt    @map("total_bytes")
+  uploadedBytes  BigInt    @default(0) @map("uploaded_bytes")
+  status         String    @default("in_progress") @map("status") // in_progress | completed | aborted | expired
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  expiresAt      DateTime  @map("expires_at") // stale-session cleanup job sweeps past this (PUB4)
+
+  owner User                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  files UploadSessionFile[]
+
+  @@index([ownerId, status])
+  @@index([expiresAt]) // for the stale-session sweep, mirrors Folder/Photo's deletedAt index pattern
+  @@map("upload_sessions")
+}
+
+// Per-file bookkeeping between /initiate and /complete|/abort (PUB7,
+// DECIDED 2026-07-13: a companion table). /complete and /abort receive only
+// sessionId + clientId(s) from the client — the server looks up key/uploadId
+// from THIS table (scoped to sessionId/ownerId via the session relation)
+// rather than trusting a client-supplied key/uploadId directly, which would
+// let a compromised/buggy client reference an arbitrary S3 key/uploadId pair.
+model UploadSessionFile {
+  id        String   @id @default(uuid())
+  sessionId String   @map("session_id")
+  clientId  String   @map("client_id") // browser-generated correlation id, echoed from /initiate's response
+  key       String   @map("key")       // S3/MinIO object key
+  uploadId  String   @map("upload_id") // S3/MinIO multipart UploadId
+  sizeBytes BigInt   @map("size_bytes")
+  sha256    String   @map("sha256")
+  mimeType  String   @map("mime_type")
+  // Not in the spec's literal Prisma block — added because Photo.originalFilename
+  // is non-nullable and must be populated at /complete time, once Photo-row
+  // creation is deferred (spec's own recommendation, Open Question #6) past
+  // /initiate (the only point the client's declared filename is otherwise
+  // available). Flagged as a deviation in the MR draft, not silently baked in.
+  originalFilename String   @map("original_filename")
+  status    String   @default("pending") @map("status") // pending | completed | failed | aborted
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session UploadSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, clientId])
+  @@index([sessionId, status])
+  @@map("upload_session_files")
+}
+
+// Face-recognition person registry (renameable-Person-folders feature,
+// 2026-07-11). One row per DISTINCT person the face pipeline has enrolled:
+// maps a Rekognition collection FaceId to the folder that person's photos
+// file into. The folder link is by ID, not name — so renaming "Person 1" to
+// "Mom" keeps every future photo of that person filing into "Mom" (the old
+// implementation resolved via the "person-N" naming convention, which a
+// rename silently broke, minting a duplicate "Person N" folder).
+//
+// Lifecycle: rows die with their folder (hard delete cascades) or their
+// owner. A face that matches in Rekognition but has no row here (e.g. its
+// folder was purged) gets a FRESH folder created and the mapping re-pointed
+// — never a re-index of the same face into the collection.
+model PersonFace {
+  id        String   @id @default(uuid())
+  ownerId   String   @map("owner_id")
+  faceId    String   @map("face_id") // Rekognition FaceId in this owner's collection
+  folderId  String   @map("folder_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  owner  User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, faceId]) // one mapping per enrolled face; race-safe upsert target
+  @@index([ownerId])
+  @@map("person_faces")
+}
+
+// Roadmap §6 `collections` table (listing-only subset this pass, per
+// specs/ai-classification.md Non-goals — no user CRUD, no is_public until
+// Week 9-10 guest sharing). One default "My Photos" collection is created
+// lazily by the worker at first folder assignment.
+model Collection {
+  id          String   @id @default(uuid())
+  ownerId     String   @map("owner_id")
+  name        String
+  description String?
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  owner   User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  folders Folder[]
+  photos  Photo[]
+
+  @@unique([ownerId, name]) // race-safe find-or-create of the default collection (spec Open Question 1)
+  @@index([ownerId])
+  @@map("collections")
+}
+
+// Roadmap §6 `folders` table — AI-auto-created (category_type "ai_generated")
+// by the worker's folder-assignment step, or user-created ("custom") via
+// POST /api/collections/:id/folders. Create-only this pass (no rename/merge/delete).
+model Folder {
+  id           String    @id @default(uuid())
+  collectionId String    @map("collection_id")
+  name         String // 'People', 'Nature', ..., 'Uncategorized', or custom
+  categoryType String    @default("ai_generated") @map("category_type") // ai_generated | custom
+  photoCount   Int       @default(0) @map("photo_count")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  // specs/trash-system.md — soft-delete ("trash"), 7-day retention, then
+  // auto-purge. Null = live. Set by DELETE /api/folders/:id, cleared by
+  // POST /api/folders/:id/restore. Photos are NOT individually marked
+  // deleted when their folder is trashed (T-folder-photos) — they're hidden
+  // transitively by every listing query checking this column via the folder.
+  deletedAt DateTime? @map("deleted_at")
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  photos     Photo[]
+  // Back-relation only (specs/guest-access-otp.md §1). The FK lives on
+  // folder_permissions.folder_id; no physical column added to `folders`.
+  permissions FolderPermission[]
+  personFaces PersonFace[]
+
+  // T7 (specs/trash-system.md, FINAL DECISION 3): this is DELIBERATELY a
+  // plain non-unique index, NOT `@@unique([collectionId, name])`. The REAL
+  // uniqueness constraint is a Postgres PARTIAL unique index —
+  // `CREATE UNIQUE INDEX folder_active_name_unique ON folders (collection_id,
+  // name) WHERE deleted_at IS NULL;` — added by hand-editing the raw SQL of
+  // migration `20260708_add_trash_system` (Prisma's schema DSL cannot express
+  // a `WHERE` clause on a unique index). DO NOT "fix" this back to a plain
+  // `@@unique` — that would make a trashed folder occupy its name slot again,
+  // reintroducing the exact 409-on-recreate friction this design removes.
+  // This @@index exists ONLY for query performance on (collectionId, name)
+  // lookups (e.g. the worker's find-or-create); it enforces NOTHING by itself.
+  @@index([collectionId, name])
+  @@index([collectionId])
+  @@index([deletedAt]) // purge-job query across all owners (specs/trash-system.md)
+  @@map("folders")
+}
+
+model Session {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  createdAt DateTime  @default(now()) @map("created_at")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// Password reset (2026-07-13 backend audit #8). Same opaque-token pattern as
+// Session/GuestSession/InviteToken — raw token only ever in the emailed
+// link, SHA-256 hash in the DB. One-hour TTL, single-use (usedAt set the
+// moment it's redeemed, so a reused/replayed link 404s the same as an
+// unknown one — never distinguishable, same anti-enumeration posture as
+// every other token surface in this app).
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// Roadmap §6 `photos` table (image-relevant subset only, per
+// specs/upload-pipeline.md Non-goals — collection_id/folder_id present but
+// nullable/unused this pass, no Collections CRUD yet).
+model Photo {
+  id       String @id @default(uuid())
+  ownerId  String @map("owner_id")
+
+  // Original file location in MinIO (private bucket, never a public URL).
+  s3Key         String @map("s3_key")
+  s3ThumbnailKey String? @map("s3_thumbnail_key") // points at the 400px "default" thumbnail once generated (spec Open Question 2)
+  originalFilename String @map("original_filename")
+  mimeType      String @map("mime_type")
+  sizeBytes     Int    @map("size_bytes")
+
+  // Populated by the worker's EXIF step (exifr) - null (not an error) when
+  // the source image carries no EXIF data.
+  exifTakenAt      DateTime? @map("exif_taken_at")
+  exifGpsLat       Float?    @map("exif_gps_lat")
+  exifGpsLng       Float?    @map("exif_gps_lng")
+  exifCameraMake   String?   @map("exif_camera_make")
+  exifCameraModel  String?   @map("exif_camera_model")
+
+  // Dedup gate (worker step 3, per-user scope per spec Open Question 7).
+  // Two-phase since specs/ai-classification.md: SHA-256 exact pass first,
+  // then pHash near-dup pass (with degenerate flat-image guard).
+  phash             String?  @map("phash")
+  duplicateOfPhotoId String? @map("duplicate_of_photo_id")
+  fileSha256        String?  @map("file_sha256") // set at upload; pre-existing rows stay null (no backfill)
+  dedupMethod       String?  @map("dedup_method") // 'sha256' | 'phash', set only when flagged duplicate (observability)
+
+  // Mocked classification result (worker step 4) - swappable interface,
+  // never a real Vision API call this pass (see lib/classification).
+  aiLabels     String[] @map("ai_labels")
+  aiConfidence Float?   @map("ai_confidence")
+
+  // Set by the worker's folder-assignment step (specs/ai-classification.md §4)
+  // or by a manual move (PATCH /api/photos/:id). Null until first classified.
+  collectionId String? @map("collection_id")
+  folderId     String? @map("folder_id")
+
+  aiClassificationStatus String @default("pending") @map("ai_classification_status") // pending|processing|done|duplicate|failed
+
+  // Cached raw detection result (the full ClassificationResult JSON: labels,
+  // per-label confidences, taxonomies) from the photo's LAST live provider
+  // call. Reclassify re-runs only the cheap local mapping over this cache —
+  // every mapping-rule improvement so far (Bugs.md #13, #15-#18) re-billed
+  // Rekognition for the whole library despite the detections being identical
+  // and correct every time. Null = never classified live (or predates this
+  // column); a reclassify then falls back to a real provider call and
+  // populates it.
+  aiDetection Json? @map("ai_detection")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // specs/trash-system.md — soft-delete ("trash"), 7-day retention, then
+  // auto-purge. Null = live. Set by DELETE /api/photos/:id (and bulk-delete),
+  // cleared by POST /api/photos/:id/restore. A photo can ALSO be hidden
+  // transitively if its FOLDER has deletedAt set (T-folder-photos) — every
+  // listing query must check both.
+  deletedAt DateTime? @map("deleted_at")
+
+  // Set ONLY when this photo was decoupled from a folder that got PERMANENTLY
+  // purged while the photo was already independently trashed (lib/purge.ts
+  // purgeFolder). Remembers the original folder's name so restore can ask
+  // "that folder is gone — pick an existing folder or create a new one"
+  // instead of silently dropping the photo into Unfiled. Cleared the moment
+  // the photo is actually restored (POST /api/photos/:id/restore), whichever
+  // folder it ends up in.
+  deletedFolderName String? @map("deleted_folder_name")
+
+  owner      User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  jobs       ProcessingJob[]
+  collection Collection?     @relation(fields: [collectionId], references: [id])
+  folder     Folder?         @relation(fields: [folderId], references: [id])
+
+  @@index([ownerId])
+  @@index([ownerId, aiClassificationStatus])
+  @@index([ownerId, fileSha256])
+  @@index([ownerId, deletedAt]) // trash listing + purge-job query (specs/trash-system.md)
+  @@map("photos")
+}
+
+// Roadmap §6 `processing_jobs` table - one row per enqueued pipeline job,
+// giving visibility into worker outcomes without grepping logs.
+model ProcessingJob {
+  id           String   @id @default(uuid())
+  photoId      String   @map("photo_id")
+  jobType      String   @default("pipeline") @map("job_type")
+  status       String   @default("queued") @map("status") // queued|active|completed|failed
+  attempts     Int      @default(0) @map("attempts")
+  errorMessage String?  @map("error_message")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  photo Photo @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@index([photoId])
+  @@map("processing_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Guest Access + OTP (specs/guest-access-otp.md §1, roadmap §6). All five
+// models below are additive — no existing table altered. Geo columns
+// (location_city/location_country) deliberately omitted per decision G8;
+// audit_log deferred to Week 11-12 per G9.
+// ---------------------------------------------------------------------------
+
+// A lightweight, account-less recipient of a share. Created by an owner via
+// POST /api/guests; never promoted to `users` (Non-goal). `email` is a human
+// label (and the addressee a real provider would use post-swap), NOT an
+// authenticated identity — the OTP goes to the OWNER, not the guest.
+model GuestUser {
+  id        String   @id @default(uuid())
+  email     String
+  name      String?
+  createdBy String   @map("created_by") // the owner (users.id) who invited them
+  createdAt DateTime @default(now()) @map("created_at")
+
+  owner             User               @relation("GuestsInvited", fields: [createdBy], references: [id], onDelete: Cascade)
+  inviteTokens      InviteToken[]
+  folderPermissions FolderPermission[]
+  accessRequests    AccessRequest[]
+  guestSessions     GuestSession[]
+
+  @@index([createdBy])
+  @@map("guest_users")
+}
+
+// The invite link's payload. Only the SHA-256 hash of the raw token is
+// persisted — the raw token exists only in the shareable link (decision G4).
+// max_uses defaults to 1 (decision G6): one named guest, no link-forwarding.
+model InviteToken {
+  id           String    @id @default(uuid())
+  tokenHash    String    @unique @map("token_hash") // SHA-256 of the raw token (raw only ever in the link)
+  guestUserId  String    @map("guest_user_id")
+  collectionId String?   @map("collection_id") // informational context; real scope is folder_permissions (G3)
+  createdBy    String    @map("created_by")
+  maxUses      Int?      @map("max_uses") // null = unlimited (G6 default = 1)
+  useCount     Int       @default(0) @map("use_count")
+  expiresAt    DateTime? @map("expires_at")
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  guestUser      GuestUser       @relation(fields: [guestUserId], references: [id], onDelete: Cascade)
+  accessRequests AccessRequest[]
+
+  @@index([guestUserId])
+  @@map("invite_tokens")
+}
+
+// The real access scope (decision G3 = folder). One row per shared folder.
+// Live when revokedAt is null AND (expiresAt null OR future) —
+// getPermittedFolderIds() is the single choke point that enforces this.
+model FolderPermission {
+  id              String    @id @default(uuid())
+  guestUserId     String    @map("guest_user_id")
+  folderId        String    @map("folder_id")
+  permissionLevel String    @map("permission_level") // 'view' | 'download' | 'download_all'
+  expiresAt       DateTime? @map("expires_at")
+  grantedBy       String    @map("granted_by") // users.id
+  revokedAt       DateTime? @map("revoked_at") // null = active
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  guestUser GuestUser @relation(fields: [guestUserId], references: [id], onDelete: Cascade)
+  folder    Folder    @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([guestUserId, folderId])
+  @@index([guestUserId])
+  @@map("folder_permissions")
+}
+
+// One per guest attempt to enter via an invite link. Carries the OTP gate
+// state: SHA-256 hash only (plaintext never persisted), 5-min TTL, single-use,
+// 3 wrong owner-submitted attempts -> auto-deny (roadmap §12 Layer 5).
+model AccessRequest {
+  id            String    @id @default(uuid())
+  inviteTokenId String    @map("invite_token_id")
+  guestUserId   String    @map("guest_user_id")
+  ipAddress     String?   @map("ip_address")
+  deviceInfo    Json?     @map("device_info") // user-agent etc. (no geo — decision G8)
+  status        String    @default("pending") // pending|approved|denied|expired
+  otpHash       String?   @map("otp_hash") // SHA-256 of the 6-digit OTP
+  otpExpiresAt  DateTime? @map("otp_expires_at")
+  otpAttempts   Int       @default(0) @map("otp_attempts") // 3 wrong -> auto-deny
+  // Decision G7 handoff: the request flips to `approved` at owner-approval;
+  // the guest session is minted exactly once by the guest's own status poll
+  // (the poll sets the httpOnly guest cookie). This timestamp is the
+  // claim-once latch — set atomically on the first poll that observes
+  // `approved`, so a concurrent double-poll can't mint two sessions and the
+  // raw guest token is never persisted anywhere (only its own SHA-256 hash in
+  // guest_sessions, mirroring owner sessions).
+  sessionClaimedAt DateTime? @map("session_claimed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  resolvedAt    DateTime? @map("resolved_at")
+  resolvedBy    String?   @map("resolved_by") // users.id of the approving/denying owner
+
+  inviteToken InviteToken @relation(fields: [inviteTokenId], references: [id], onDelete: Cascade)
+  guestUser   GuestUser   @relation(fields: [guestUserId], references: [id], onDelete: Cascade)
+  touches     AccessRequestTouch[]
+
+  @@index([status, createdAt])
+  @@map("access_requests")
+}
+
+// One row per "someone clicked the invite link while this request is still
+// pending" (link-forwarding detection). `ipAddress`/`deviceInfo` on
+// AccessRequest itself only ever reflect the FIRST click (kept for backward
+// compatibility with existing reads) — every click, including the first,
+// ALSO gets a row here, so the owner's approval queue can flag "this link
+// was opened from N different devices" before they approve. Never written
+// to after the request leaves `pending` (approved/denied/expired requests
+// don't accumulate further touches).
+model AccessRequestTouch {
+  id              String   @id @default(uuid())
+  accessRequestId String   @map("access_request_id")
+  ipAddress       String?  @map("ip_address")
+  deviceInfo      Json?    @map("device_info") // user-agent etc. — same shape as AccessRequest.deviceInfo
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  accessRequest AccessRequest @relation(fields: [accessRequestId], references: [id], onDelete: Cascade)
+
+  @@index([accessRequestId])
+  @@map("access_request_touches")
+}
+
+// ---------------------------------------------------------------------------
+// Audit log (specs/audit-and-polish.md §A1, roadmap §6 `audit_log` +
+// idx_audit_actor, §12 Layer 6 "immutable log of all actions"). Additive —
+// no existing table altered. Append-only from the API (no PATCH/DELETE).
+//
+// Deviation from roadmap §6 (decision AP3): a denormalized `owner_id` is added
+// so `GET /api/audit` is a single indexed owner-scoped scan (an owner sees
+// entries where THEY are the actor AND where their GUEST is the actor) — no
+// join back through guest_users.created_by on every read, and leak-proofing
+// is trivial.
+//
+// NO FK relations: actorId/resourceId/ownerId are plain string IDs, NOT FK
+// relations with onDelete: Cascade. An audit row MUST survive deletion of the
+// resource it describes (a revoked guest, a deleted folder/photo) — a hard FK
+// would erase history and defeat the purpose of an immutable log. Names are
+// captured into `metadata` at write time (best-effort) and/or resolved at
+// read time.
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorType    String   @map("actor_type") // 'owner' | 'guest'
+  actorId      String   @map("actor_id") // users.id or guest_users.id
+  ownerId      String   @map("owner_id") // the owner who OWNS this trail (AP3, denormalized)
+  action       String // enumerated set (specs/audit-and-polish.md §A2)
+  resourceType String?  @map("resource_type") // 'photo' | 'folder' | 'guest' | 'access_request'
+  resourceId   String?  @map("resource_id")
+  metadata     Json? // extra context (guest email, folder names, permission level, outcome)
+  ipAddress    String?  @map("ip_address")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([ownerId, createdAt(sort: Desc)]) // the primary query: an owner's trail, newest first
+  @@index([actorId, createdAt(sort: Desc)]) // roadmap §6 idx_audit_actor
+  @@map("audit_log")
+}
+
+// Opaque, revocable guest session — mirrors `sessions` exactly (SHA-256 hash
+// only, never a JWT). expires_at added vs roadmap §6 (decision G2), capped at
+// min(GUEST_SESSION_TTL_HOURS, earliest live permission expiry).
+model GuestSession {
+  id          String    @id @default(uuid())
+  guestUserId String    @map("guest_user_id")
+  tokenHash   String    @unique @map("token_hash") // SHA-256, mirrors Session
+  ipAddress   String?   @map("ip_address")
+  userAgent   String?   @map("user_agent")
+  expiresAt   DateTime  @map("expires_at")
+  lastUsedAt  DateTime  @default(now()) @map("last_used_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  guestUser GuestUser @relation(fields: [guestUserId], references: [id], onDelete: Cascade)
+
+  @@index([guestUserId])
+  @@map("guest_sessions")
+}

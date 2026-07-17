@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- Option A: Sidebar folder tree + thumbnail grid, per-card move dropdown -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Organize</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="48" width="220" height="552" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="16" y="76" font-size="12" fill="#8a90a0" font-weight="bold">MY PHOTOS</text>
+
+  <!-- Folder rows -->
+  <rect x="8" y="88" width="204" height="30" rx="4" fill="#e8eefc"/>
+  <text x="18" y="108" font-size="13" fill="#1b3a9e" font-weight="bold">Food</text>
+  <text x="188" y="108" font-size="12" fill="#1b3a9e">12</text>
+
+  <text x="18" y="140" font-size="13" fill="#333">People</text><text x="188" y="140" font-size="12" fill="#8a90a0">34</text>
+  <text x="18" y="168" font-size="13" fill="#333">Nature</text><text x="188" y="168" font-size="12" fill="#8a90a0">8</text>
+  <text x="18" y="196" font-size="13" fill="#333">Animals</text><text x="188" y="196" font-size="12" fill="#8a90a0">5</text>
+  <text x="18" y="224" font-size="13" fill="#333">Uncategorized</text><text x="188" y="224" font-size="12" fill="#8a90a0">7</text>
+  <text x="18" y="252" font-size="13" fill="#333">Vacation 2026 (custom)</text><text x="188" y="252" font-size="12" fill="#8a90a0">3</text>
+
+  <!-- New folder inline -->
+  <line x1="8" y1="270" x2="212" y2="270" stroke="#dde1e8"/>
+  <rect x="12" y="282" width="150" height="26" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="20" y="299" font-size="12" fill="#a0a6b5">New folder name…</text>
+  <rect x="168" y="282" width="44" height="26" rx="4" fill="#3057d5"/>
+  <text x="177" y="299" font-size="12" fill="#ffffff">Add</text>
+
+  <!-- Main area header -->
+  <text x="240" y="80" font-size="15" fill="#222" font-weight="bold">Food</text>
+  <text x="278" y="80" font-size="12" fill="#8a90a0">— 12 photos</text>
+
+  <!-- Photo card 1 (normal) -->
+  <rect x="240" y="96" width="168" height="176" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="252" y="108" width="144" height="96" fill="#d7dbe4"/>
+  <text x="300" y="160" font-size="11" fill="#8a90a0">thumb 150px</text>
+  <text x="252" y="220" font-size="11" fill="#333">IMG_2041.jpg</text>
+  <text x="252" y="234" font-size="10" fill="#8a90a0">Food, Meal · 0.83</text>
+  <rect x="252" y="242" width="144" height="22" rx="4" fill="#f2f4f8" stroke="#b9c0cf"/>
+  <text x="260" y="257" font-size="11" fill="#333">Move to… ▾</text>
+
+  <!-- Photo card 2 (normal) -->
+  <rect x="424" y="96" width="168" height="176" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="436" y="108" width="144" height="96" fill="#d7dbe4"/>
+  <text x="484" y="160" font-size="11" fill="#8a90a0">thumb 150px</text>
+  <text x="436" y="220" font-size="11" fill="#333">brunch.jpg</text>
+  <text x="436" y="234" font-size="10" fill="#8a90a0">Food, Meal · 0.79</text>
+  <rect x="436" y="242" width="144" height="22" rx="4" fill="#f2f4f8" stroke="#b9c0cf"/>
+  <text x="444" y="257" font-size="11" fill="#333">Move to… ▾</text>
+
+  <!-- Photo card 3 (failed -> reclassify button) -->
+  <rect x="608" y="96" width="168" height="176" rx="6" fill="#ffffff" stroke="#e2b6b6"/>
+  <rect x="620" y="108" width="144" height="96" fill="#f3e2e2"/>
+  <text x="662" y="160" font-size="11" fill="#b05555">failed</text>
+  <text x="620" y="220" font-size="11" fill="#333">IMG_2044.jpg</text>
+  <text x="620" y="234" font-size="10" fill="#b05555">classification failed</text>
+  <rect x="620" y="242" width="144" height="22" rx="4" fill="#b05555"/>
+  <text x="650" y="257" font-size="11" fill="#ffffff">Reclassify</text>
+
+  <!-- Photo card 4 (duplicate -> reclassify button) -->
+  <rect x="240" y="288" width="168" height="176" rx="6" fill="#ffffff" stroke="#d8c9a2"/>
+  <rect x="252" y="300" width="144" height="96" fill="#f1ead6"/>
+  <text x="288" y="352" font-size="11" fill="#9a7d2e">duplicate</text>
+  <text x="252" y="412" font-size="11" fill="#333">IMG_2050.jpg</text>
+  <text x="252" y="426" font-size="10" fill="#9a7d2e">duplicate of IMG_2041 (sha256)</text>
+  <rect x="252" y="434" width="144" height="22" rx="4" fill="#9a7d2e"/>
+  <text x="278" y="449" font-size="11" fill="#ffffff">Not a duplicate?</text>
+
+  <!-- Open move dropdown illustration -->
+  <rect x="424" y="288" width="168" height="176" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="436" y="300" width="144" height="60" fill="#d7dbe4"/>
+  <rect x="436" y="366" width="144" height="88" rx="4" fill="#ffffff" stroke="#3057d5"/>
+  <text x="444" y="382" font-size="11" fill="#8a90a0">Move to…</text>
+  <text x="444" y="400" font-size="11" fill="#333">People</text>
+  <rect x="440" y="406" width="136" height="18" fill="#e8eefc"/>
+  <text x="444" y="419" font-size="11" fill="#1b3a9e">Vacation 2026</text>
+  <text x="444" y="438" font-size="11" fill="#333">Uncategorized</text>
+
+  <!-- Pagination -->
+  <rect x="240" y="480" width="80" height="26" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="256" y="497" font-size="12" fill="#333">‹ Prev</text>
+  <rect x="330" y="480" width="80" height="26" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="346" y="497" font-size="12" fill="#333">Next ›</text>
+  <text x="430" y="497" font-size="11" fill="#8a90a0">Showing 1–12 of 12 (limit 50)</text>
+
+  <!-- Footnote -->
+  <text x="240" y="560" font-size="10" fill="#8a90a0">Option A — sidebar folder tree (counts live-update after moves) + grid; move via per-card dropdown;</text>
+  <text x="240" y="574" font-size="10" fill="#8a90a0">Reclassify button appears only on failed/duplicate cards; new-folder input inline in sidebar.</text>
+</svg>

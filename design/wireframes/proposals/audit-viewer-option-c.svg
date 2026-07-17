@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- P7 Option C: "Recent activity" section on /dashboard -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Dashboard</text>
+  <text x="640" y="30" fill="#cdd8f7" font-size="12">Guests</text>
+  <text x="730" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Existing dashboard context (muted, storage hero collapsed to a strip) -->
+  <rect x="24" y="66" width="752" height="44" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="44" y="86" font-size="12" fill="#8a90a0" font-weight="bold">STORAGE</text>
+  <text x="120" y="86" font-size="14" fill="#222" font-weight="bold">3.1 GB <tspan font-size="11" fill="#8a90a0" font-weight="normal">of 5.0 GB</tspan></text>
+  <rect x="300" y="80" width="360" height="12" rx="6" fill="#eef1f6"/>
+  <rect x="300" y="80" width="223" height="12" rx="6" fill="#3057d5"/>
+  <text x="676" y="90" font-size="11" fill="#8a90a0">1,248 photos</text>
+  <text x="24" y="128" font-size="11" fill="#8a90a0">— existing dashboard tiles (folders, at-a-glance) continue here —</text>
+  <line x1="24" y1="138" x2="776" y2="138" stroke="#eef1f6" stroke-dasharray="4,3"/>
+
+  <!-- Recent activity card -->
+  <rect x="24" y="152" width="752" height="336" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="44" y="180" font-size="15" fill="#222" font-weight="bold">Recent activity</text>
+  <text x="180" y="180" font-size="11" fill="#8a90a0">who's been in your shared folders</text>
+  <text x="672" y="180" font-size="11" fill="#1b3a9e" font-weight="bold">View all →</text>
+
+  <line x1="44" y1="194" x2="756" y2="194" stroke="#eef1f6"/>
+
+  <!-- Compact rows -->
+  <!-- guest photo_downloaded -->
+  <rect x="44" y="206" width="10" height="10" rx="5" fill="#3d9a5b"/>
+  <text x="66" y="216" font-size="12" fill="#222"><tspan font-weight="bold">client@example.com</tspan> downloaded a photo in Nature</text>
+  <rect x="60" y="222" width="46" height="14" rx="7" fill="#faf1e3"/>
+  <text x="68" y="233" font-size="8" fill="#a07a3a" font-weight="bold">GUEST</text>
+  <text x="116" y="233" font-size="10" fill="#8a90a0">IP 203.0.113.9</text>
+  <text x="700" y="216" font-size="10" fill="#8a90a0">2 min ago</text>
+
+  <!-- guest photo_viewed -->
+  <rect x="44" y="252" width="10" height="10" rx="5" fill="#3057d5"/>
+  <text x="66" y="262" font-size="12" fill="#222"><tspan font-weight="bold">client@example.com</tspan> viewed a photo in Nature</text>
+  <rect x="60" y="268" width="46" height="14" rx="7" fill="#faf1e3"/>
+  <text x="68" y="279" font-size="8" fill="#a07a3a" font-weight="bold">GUEST</text>
+  <text x="116" y="279" font-size="10" fill="#8a90a0">IP 203.0.113.9</text>
+  <text x="700" y="262" font-size="10" fill="#8a90a0">3 min ago</text>
+
+  <!-- owner access_approved -->
+  <rect x="44" y="298" width="10" height="10" rx="5" fill="#3d9a5b"/>
+  <text x="66" y="308" font-size="12" fill="#222"><tspan font-weight="bold">You</tspan> approved access for client@example.com</text>
+  <rect x="60" y="314" width="52" height="14" rx="7" fill="#e8eefc"/>
+  <text x="68" y="325" font-size="8" fill="#1b3a9e" font-weight="bold">OWNER</text>
+  <text x="700" y="308" font-size="10" fill="#8a90a0">6 min ago</text>
+
+  <!-- owner access_denied (reason) -->
+  <rect x="44" y="344" width="10" height="10" rx="5" fill="#c46b6b"/>
+  <text x="66" y="354" font-size="12" fill="#9a5555"><tspan font-weight="bold">You</tspan> denied access for studio@bride.co</text>
+  <rect x="60" y="360" width="52" height="14" rx="7" fill="#e8eefc"/>
+  <text x="68" y="371" font-size="8" fill="#1b3a9e" font-weight="bold">OWNER</text>
+  <text x="116" y="371" font-size="10" fill="#8a90a0">reason: too many wrong codes (otp_attempts_exceeded)</text>
+  <text x="694" y="354" font-size="10" fill="#8a90a0">14 min ago</text>
+
+  <!-- owner share_created -->
+  <rect x="44" y="390" width="10" height="10" rx="5" fill="#3057d5"/>
+  <text x="66" y="400" font-size="12" fill="#222"><tspan font-weight="bold">You</tspan> shared Nature with client@example.com (download)</text>
+  <rect x="60" y="406" width="52" height="14" rx="7" fill="#e8eefc"/>
+  <text x="68" y="417" font-size="8" fill="#1b3a9e" font-weight="bold">OWNER</text>
+  <text x="694" y="400" font-size="10" fill="#8a90a0">18 min ago</text>
+
+  <line x1="44" y1="440" x2="756" y2="440" stroke="#eef1f6"/>
+  <text x="44" y="466" font-size="11" fill="#8a90a0">Showing the 5 most recent of 42 events.</text>
+  <rect x="640" y="452" width="116" height="26" rx="5" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="656" y="469" font-size="11" fill="#1b3a9e" font-weight="bold">See full activity →</text>
+
+  <!-- Footnote -->
+  <text x="24" y="560" font-size="10" fill="#8a90a0">Option C — a compact "Recent activity" card on /dashboard (last N events) where the owner already lands, with a</text>
+  <text x="24" y="574" font-size="10" fill="#8a90a0">"View all" affordance. Lowest-friction passive discovery, but truncated and unfiltered — not a full log on its own (needs A/B behind it).</text>
+</svg>

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- Option C: Sidebar nav shell, stats as the default pane -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Persistent left nav -->
+  <rect x="0" y="48" width="180" height="552" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="8" y="64" width="164" height="34" rx="6" fill="#e8eefc"/>
+  <text x="20" y="86" font-size="13" fill="#1b3a9e" font-weight="bold">▤ Dashboard</text>
+
+  <text x="20" y="128" font-size="13" fill="#333">🗂 Organize</text>
+  <text x="20" y="164" font-size="13" fill="#333">🖼 Browse</text>
+  <text x="20" y="200" font-size="13" fill="#333">⬆ Upload</text>
+
+  <line x1="16" y1="228" x2="164" y2="228" stroke="#dde1e8"/>
+  <text x="20" y="250" font-size="11" fill="#8a90a0">MY PHOTOS</text>
+  <text x="20" y="274" font-size="12" fill="#555">Food (12)</text>
+  <text x="20" y="298" font-size="12" fill="#555">People (34)</text>
+  <text x="20" y="322" font-size="12" fill="#555">Nature (8)</text>
+  <text x="20" y="346" font-size="12" fill="#b05555">Unfiled (2)</text>
+
+  <!-- Main pane: stats as default view -->
+  <text x="204" y="80" font-size="18" fill="#222" font-weight="bold">Dashboard</text>
+
+  <rect x="204" y="100" width="176" height="96" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="220" y="126" font-size="11" fill="#8a90a0">TOTAL PHOTOS</text>
+  <text x="220" y="160" font-size="26" fill="#222" font-weight="bold">1,248</text>
+
+  <rect x="392" y="100" width="176" height="96" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="408" y="126" font-size="11" fill="#8a90a0">FOLDERS</text>
+  <text x="408" y="160" font-size="26" fill="#222" font-weight="bold">9</text>
+
+  <rect x="580" y="100" width="196" height="96" rx="8" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="596" y="126" font-size="11" fill="#1b3a9e">STORAGE</text>
+  <text x="596" y="160" font-size="26" fill="#1b3a9e" font-weight="bold">62%</text>
+  <text x="596" y="180" font-size="10" fill="#4a63a8">3.1 / 5.0 GB</text>
+
+  <text x="204" y="232" font-size="14" fill="#222" font-weight="bold">Recent activity</text>
+  <rect x="204" y="248" width="572" height="140" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="220" y="272" font-size="11" fill="#8a90a0">(placeholder — no activity feed endpoint exists yet;</text>
+  <text x="220" y="288" font-size="11" fill="#8a90a0">this pane would need new backend work beyond GET /api/dashboard)</text>
+
+  <!-- Footnote -->
+  <text x="204" y="560" font-size="10" fill="#8a90a0">Option C — persistent sidebar nav across the whole app, stats as the default landing pane.</text>
+  <text x="204" y="574" font-size="10" fill="#8a90a0">Solves lack of nav elsewhere, but /organize, /browse, /upload would all need this shell to feel real.</text>
+</svg>

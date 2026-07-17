@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <rect width="800" height="600" fill="#f7f7f9"/>
+  <rect x="0" y="0" width="800" height="56" fill="#ffffff"/>
+  <line x1="0" y1="56" x2="800" y2="56" stroke="#e2e2e6"/>
+  <text x="24" y="34" font-size="18" font-weight="bold" fill="#1b3a9e">PhotoSphere AI — Settings</text>
+
+  <text x="40" y="100" font-size="24" font-weight="bold" fill="#222">Settings</text>
+  <text x="40" y="124" font-size="13" fill="#666">Plan (testing only) — comparison table, pick a row.</text>
+
+  <!-- 3 stacked radio rows, each with a mini stat table -->
+  <rect x="40" y="150" width="720" height="76" rx="8" fill="#e8eefc" stroke="#1b3a9e" stroke-width="2"/>
+  <circle cx="66" cy="188" r="7" fill="#1b3a9e"/>
+  <text x="90" y="180" font-size="15" font-weight="bold" fill="#1b3a9e">Free  (current)</text>
+  <text x="90" y="200" font-size="12" fill="#333">50 photos/batch · 5GB storage · standard queue priority</text>
+
+  <rect x="40" y="234" width="720" height="76" rx="8" fill="#ffffff" stroke="#cfcfd6"/>
+  <circle cx="66" cy="272" r="7" fill="none" stroke="#999" stroke-width="2"/>
+  <text x="90" y="264" font-size="15" fill="#333">Pro</text>
+  <text x="90" y="284" font-size="12" fill="#666">500 photos/batch · 100GB storage · elevated queue priority</text>
+
+  <rect x="40" y="318" width="720" height="76" rx="8" fill="#ffffff" stroke="#cfcfd6"/>
+  <circle cx="66" cy="356" r="7" fill="none" stroke="#999" stroke-width="2"/>
+  <text x="90" y="348" font-size="15" fill="#333">Studio</text>
+  <text x="90" y="368" font-size="12" fill="#666">1500 photos/batch · 500GB storage · highest queue priority</text>
+
+  <rect x="40" y="410" width="130" height="38" rx="6" fill="#1b3a9e"/>
+  <text x="105" y="434" font-size="13" text-anchor="middle" fill="#fff">Apply plan</text>
+  <text x="190" y="434" font-size="11" fill="#999">No payment. Testing only — not a real upgrade flow.</text>
+
+  <text x="40" y="480" font-size="11" fill="#999">Option B — 3 stacked radio rows w/ per-tier stats, explicit "Apply" button (not instant).</text>
+</svg>

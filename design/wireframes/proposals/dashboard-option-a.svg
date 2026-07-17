@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- Option A: Stat cards + collection list -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Dashboard</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Stat cards row -->
+  <rect x="24" y="72" width="176" height="104" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="40" y="100" font-size="12" fill="#8a90a0">TOTAL PHOTOS</text>
+  <text x="40" y="140" font-size="30" fill="#222" font-weight="bold">1,248</text>
+  <text x="40" y="162" font-size="11" fill="#8a90a0">totals.photoCount</text>
+
+  <rect x="212" y="72" width="176" height="104" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="228" y="100" font-size="12" fill="#8a90a0">FOLDERS</text>
+  <text x="228" y="140" font-size="30" fill="#222" font-weight="bold">9</text>
+  <text x="228" y="162" font-size="11" fill="#8a90a0">totals.folderCount</text>
+
+  <rect x="400" y="72" width="176" height="104" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="416" y="100" font-size="12" fill="#8a90a0">COLLECTIONS</text>
+  <text x="416" y="140" font-size="30" fill="#222" font-weight="bold">1</text>
+  <text x="416" y="162" font-size="11" fill="#8a90a0">totals.collectionCount</text>
+
+  <rect x="588" y="72" width="188" height="104" rx="8" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="604" y="100" font-size="12" fill="#1b3a9e">STORAGE USED</text>
+  <text x="604" y="140" font-size="30" fill="#1b3a9e" font-weight="bold">62%</text>
+  <text x="604" y="162" font-size="11" fill="#4a63a8">3.1 GB of 5.0 GB</text>
+
+  <!-- Section header -->
+  <text x="24" y="212" font-size="15" fill="#222" font-weight="bold">Your Collections</text>
+
+  <!-- Collection list rows -->
+  <rect x="24" y="228" width="752" height="56" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="40" y="252" font-size="14" fill="#333" font-weight="bold">My Photos</text>
+  <rect x="128" y="240" width="52" height="18" rx="9" fill="#e8eefc"/>
+  <text x="138" y="253" font-size="10" fill="#1b3a9e">Default</text>
+  <text x="40" y="270" font-size="11" fill="#8a90a0">9 folders · 1,248 photos</text>
+  <rect x="640" y="244" width="112" height="26" rx="4" fill="#3057d5"/>
+  <text x="656" y="261" font-size="12" fill="#ffffff">Browse →</text>
+
+  <!-- Quick actions -->
+  <text x="24" y="320" font-size="15" fill="#222" font-weight="bold">Quick actions</text>
+  <rect x="24" y="336" width="140" height="40" rx="6" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="48" y="360" font-size="12" fill="#333">Upload photos</text>
+  <rect x="176" y="336" width="140" height="40" rx="6" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="196" y="360" font-size="12" fill="#333">Browse photos</text>
+  <rect x="328" y="336" width="140" height="40" rx="6" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="336" y="360" font-size="12" fill="#333">Organize / fix-up</text>
+
+  <!-- Footnote -->
+  <text x="24" y="560" font-size="10" fill="#8a90a0">Option A — familiar SaaS-overview pattern: stat cards up top, collection list below, quick-action</text>
+  <text x="24" y="574" font-size="10" fill="#8a90a0">shortcuts at the bottom. Lowest design risk. Collection list is a single row today (one collection).</text>
+</svg>

@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- P6 Option A: dedicated /search page, filter bar over results grid -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar with Search as its own entry -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Search</text>
+  <text x="560" y="30" fill="#cdd8f7" font-size="12">Browse</text>
+  <text x="622" y="30" fill="#ffffff" font-size="12" font-weight="bold">Search</text>
+  <text x="678" y="30" fill="#cdd8f7" font-size="12">Guests</text>
+  <text x="732" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <text x="24" y="76" font-size="15" fill="#222" font-weight="bold">Search your photos</text>
+  <text x="170" y="76" font-size="11" fill="#8a90a0">filename, date, folder, category</text>
+
+  <!-- Filter bar -->
+  <rect x="24" y="88" width="752" height="76" rx="8" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="40" y="105" font-size="9" fill="#8a90a0" font-weight="bold">FILENAME</text>
+  <rect x="40" y="110" width="240" height="26" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="50" y="127" font-size="11" fill="#333">brunch</text>
+  <text x="296" y="105" font-size="9" fill="#8a90a0" font-weight="bold">FROM</text>
+  <rect x="296" y="110" width="104" height="26" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="306" y="127" font-size="11" fill="#a0a6b5">2026-06-01</text>
+  <text x="410" y="105" font-size="9" fill="#8a90a0" font-weight="bold">TO</text>
+  <rect x="410" y="110" width="104" height="26" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="420" y="127" font-size="11" fill="#a0a6b5">2026-07-06</text>
+
+  <text x="40" y="152" font-size="9" fill="#8a90a0" font-weight="bold">FOLDER</text>
+  <rect x="86" y="142" width="150" height="20" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="94" y="156" font-size="11" fill="#333">All folders ▾</text>
+  <text x="252" y="152" font-size="9" fill="#8a90a0" font-weight="bold">CATEGORY</text>
+  <rect x="312" y="142" width="150" height="20" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="320" y="156" font-size="11" fill="#333">Food ▾</text>
+
+  <rect x="620" y="110" width="70" height="26" rx="5" fill="#3057d5"/>
+  <text x="638" y="127" font-size="11" fill="#ffffff" font-weight="bold">Search</text>
+  <rect x="696" y="110" width="66" height="26" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="710" y="127" font-size="11" fill="#5a6070">Clear</text>
+
+  <!-- Category chips (available values reminder) -->
+  <text x="472" y="156" font-size="9" fill="#8a90a0">People · Nature · Animals · Food · Vehicles · Documents · Screenshots · Uncategorized</text>
+
+  <!-- Results header -->
+  <text x="24" y="188" font-size="12" fill="#333" font-weight="bold">3 results</text>
+  <text x="90" y="188" font-size="11" fill="#8a90a0">for “brunch” · Food · Jun 1 – Jul 6</text>
+
+  <!-- Results grid (reuse photo-card grid) -->
+  <rect x="24" y="200" width="168" height="160" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="36" y="212" width="144" height="96" fill="#d7dbe4"/>
+  <text x="84" y="264" font-size="11" fill="#8a90a0">thumb 150px</text>
+  <text x="36" y="326" font-size="11" fill="#333">brunch.jpg</text>
+  <text x="36" y="342" font-size="10" fill="#8a90a0">Food · Jun 12</text>
+
+  <rect x="208" y="200" width="168" height="160" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="220" y="212" width="144" height="96" fill="#d7dbe4"/>
+  <text x="268" y="264" font-size="11" fill="#8a90a0">thumb 150px</text>
+  <text x="220" y="326" font-size="11" fill="#333">brunch_2.jpg</text>
+  <text x="220" y="342" font-size="10" fill="#8a90a0">Food · Jun 20</text>
+
+  <rect x="392" y="200" width="168" height="160" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="404" y="212" width="144" height="96" fill="#d7dbe4"/>
+  <text x="452" y="264" font-size="11" fill="#8a90a0">thumb 150px</text>
+  <text x="404" y="326" font-size="11" fill="#333">weekend-brunch.jpg</text>
+  <text x="404" y="342" font-size="10" fill="#8a90a0">Food · Jul 2</text>
+
+  <text x="24" y="392" font-size="11" fill="#8a90a0">Click a photo to open it in the viewer. Showing 1–3 of 3.</text>
+
+  <!-- No-results empty state (shown as an alternate, boxed below) -->
+  <rect x="24" y="410" width="752" height="96" rx="10" fill="#ffffff" stroke="#dde1e8" stroke-dasharray="4,3"/>
+  <text x="400" y="446" font-size="13" fill="#5a6070" font-weight="bold" text-anchor="middle">No photos match those filters</text>
+  <text x="400" y="468" font-size="11" fill="#8a90a0" text-anchor="middle">Try a shorter filename, a wider date range, or clearing the folder/category filter.</text>
+  <text x="400" y="486" font-size="10" fill="#8a90a0" text-anchor="middle">(empty-state — rendered when total = 0)</text>
+
+  <!-- Footnote -->
+  <text x="24" y="560" font-size="10" fill="#8a90a0">Option A — a dedicated /search page with its own top-bar entry: a full filter bar (filename box, date range, folder + category</text>
+  <text x="24" y="574" font-size="10" fill="#8a90a0">dropdowns) over the existing photo-card grid + viewer. Roomiest; search is a first-class destination, no space fights with browsing.</text>
+</svg>

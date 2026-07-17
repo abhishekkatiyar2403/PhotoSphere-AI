@@ -1,0 +1,158 @@
+import type { Prisma } from "@prisma/client";
+import { prisma } from "./prisma";
+import { logger } from "./logger";
+
+/**
+ * The ONLY writer to `audit_log` (specs/audit-and-polish.md §A3, roadmap §12
+ * Layer 6 "immutable log of all actions"). Same discipline as the classifier /
+ * notification mock headers — a single choke-point module.
+ *
+ * ─── FIRE-AND-FORGET, NEVER-BREAK-PRIMARY CONTRACT (constraint 4, AP5) ───
+ *
+ * Logging is a SIDE EFFECT, never part of the transaction that performs the
+ * primary action. Every caller must uphold three rules, which this module
+ * enforces on its side:
+ *
+ *   1. `logAudit(...)` is NOT `await`-ed inside any primary `$transaction`, and
+ *      must be called AFTER the primary operation has committed (or, for guest
+ *      reads, right before `res.json(...)` on the SUCCESS/200 path only). It
+ *      returns `void` immediately — it kicks off the insert and does not block
+ *      the primary handler.
+ *
+ *   2. The insert is wrapped in `.catch()` that LOGS-AND-SWALLOWS. A failed
+ *      audit-log insert (DB blip, constraint, outage) can therefore NEVER roll
+ *      back or fail an approval / deny / revoke / share / view / download. The
+ *      primary action has already succeeded and been reported to the client by
+ *      the time this insert runs.
+ *
+ *   3. NOT queued via BullMQ (AP5): a single fast indexed write doesn't warrant
+ *      a Redis dependency + latency + failure modes on the write path — the
+ *      same "async only if genuinely slow" rule the guest-access OTP applied.
+ *
+ * The log is APPEND-ONLY (constraint 5): this module only ever inserts. There
+ * is no update/delete path, and the API exposes no PATCH/DELETE/`:id` route.
+ *
+ * IDs (`actorId`/`ownerId`/`resourceId`) are plain strings, NOT FK relations —
+ * a row must survive deletion of the resource it describes (a revoked guest, a
+ * deleted folder/photo). Human labels are captured into `metadata` at write
+ * time so a read never depends on the (possibly-deleted) resource still
+ * existing.
+ */
+
+export type AuditAction =
+  | "share_created"
+  | "access_requested"
+  | "access_approved"
+  | "access_denied"
+  | "guest_revoked"
+  // Owner changes an existing guest's permission level (e.g. view -> download)
+  // without revoking and re-sharing from scratch.
+  | "guest_permission_changed"
+  // Owner adds/removes ONE additional folder to/from an existing guest's
+  // share, independent of the other folders they already have.
+  | "guest_folder_added"
+  | "guest_folder_removed"
+  | "photo_viewed"
+  | "photo_downloaded"
+  // specs/folder-mgmt-download-search.md P4 (F4): destructive folder ops that
+  // interact with sharing get an owner-actor audit row. Plain rename is NOT
+  // audited (cosmetic, high-frequency — matches the AP1 owner-content exclusion).
+  | "folder_merged"
+  | "folder_deleted"
+  // specs/trash-system.md: photo delete never shipped under
+  // photo-deletion.md (superseded before it was built) — this is the FIRST
+  // time `photo_deleted` is added, now directly as a soft-delete/trash action
+  // (mirrors folder_deleted's existing "destructive, audited" precedent).
+  | "photo_deleted"
+  // specs/folder-mgmt-download-search.md P5 (Z7): a GUEST bulk folder-zip
+  // download — the "who downloaded everything" differentiator. The owner's own
+  // zip is NOT audited (owner-on-own-data, per AP1). Success-path only.
+  | "folder_downloaded"
+  // specs/trash-system.md — `photo_deleted`/`folder_deleted` above are REUSED
+  // (now semantically "moved to trash", not permanent). These four are new,
+  // additive: restoring an item, and permanently purging one (skip-the-wait
+  // manual purge OR the daily auto-purge job — distinguished only by
+  // `metadata.trigger: "manual" | "auto_purge"`, not by a separate action
+  // name). `trash_emptied` is ONE summary row per "empty trash" call, not
+  // one row per item purged (non-load-bearing granularity choice).
+  | "photo_restored"
+  | "folder_restored"
+  | "photo_permanently_deleted"
+  | "folder_permanently_deleted"
+  | "trash_emptied"
+  // 2026-07-13 backend audit #4: account deletion. Written BEFORE the User
+  // row is deleted (see routes/auth.ts) — AuditLog has no FK relation to
+  // User at all (plain string columns, no @relation), so this row survives
+  // the account's own deletion, an intentional, immutable record that it
+  // happened.
+  | "account_deleted"
+  // specs/plan-tiered-upload.md — a plan switch via PATCH /api/auth/plan
+  // (PTU5, recommended/unchallenged: consistent with the existing pattern of
+  // auditing account-affecting changes). metadata carries fromPlan/toPlan.
+  | "plan_changed";
+
+export type AuditActorType = "owner" | "guest";
+
+export type AuditResourceType = "photo" | "folder" | "guest" | "access_request" | "user";
+
+export interface LogAuditInput {
+  actorType: AuditActorType;
+  actorId: string;
+  ownerId: string;
+  action: AuditAction;
+  resourceType?: AuditResourceType;
+  resourceId?: string;
+  metadata?: Prisma.InputJsonValue;
+  ipAddress?: string | null;
+}
+
+// The concrete insert. Isolated behind a mutable reference ONLY so a test can
+// force an insert failure and assert the primary action still succeeds (the
+// never-break-primary property, AC A3). Never swapped in production.
+let insertImpl = (input: LogAuditInput): Promise<unknown> =>
+  prisma.auditLog.create({
+    data: {
+      actorType: input.actorType,
+      actorId: input.actorId,
+      ownerId: input.ownerId,
+      action: input.action,
+      resourceType: input.resourceType ?? null,
+      resourceId: input.resourceId ?? null,
+      metadata: input.metadata ?? undefined,
+      ipAddress: input.ipAddress ?? null,
+    },
+  });
+
+/**
+ * Insert one audit row, fire-and-forget. Returns immediately (`void`); the
+ * insert runs in the background and any failure is caught, logged, and
+ * swallowed so it can never affect the primary action. See the module header.
+ */
+export function logAudit(input: LogAuditInput): void {
+  // Intentionally NOT awaited by callers. Kick off the insert and let it
+  // resolve/reject in the background; a rejection is caught below.
+  void insertImpl(input).catch((err) => {
+    // Log-and-swallow: a failed audit write MUST NOT surface to the primary
+    // action (it has already committed and responded). Never re-throw.
+    logger.error(
+      { err, action: input.action, ownerId: input.ownerId },
+      "failed to write audit_log row; primary action unaffected",
+    );
+  });
+}
+
+/**
+ * TEST-ONLY: replace the insert implementation to simulate an audit-write
+ * failure (or to observe writes). Returns a restore function. Guarded to
+ * NODE_ENV=test so it can never be used in dev/prod.
+ */
+export function __setAuditInsertForTest(fn: (input: LogAuditInput) => Promise<unknown>): () => void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("__setAuditInsertForTest is test-only");
+  }
+  const prev = insertImpl;
+  insertImpl = fn;
+  return () => {
+    insertImpl = prev;
+  };
+}

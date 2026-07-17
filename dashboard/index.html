@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PhotoSphere AI — Insights Dashboard</title>
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#121826; --panel-2:#0f1420;
+    --border:#1e2636; --border-2:#2a344a;
+    --text:#e6ebf5; --muted:#8a97ad; --faint:#5c6a82;
+    --accent:#6ea8fe; --accent-2:#8b7bff;
+    --green:#3ecf8e; --amber:#f5b74e; --red:#f56b6b; --star:#ffd166;
+    --radius:14px; --shadow:0 1px 0 rgba(255,255,255,.03), 0 8px 24px rgba(0,0,0,.35);
+    font-synthesis:none;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(110,168,254,.08), transparent 60%),
+      radial-gradient(900px 500px at -10% 10%, rgba(139,123,255,.07), transparent 55%),
+      var(--bg);
+    color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.5;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:28px 22px 80px}
+  header.top{display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:22px}
+  .brand{display:flex; align-items:center; gap:12px}
+  .logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(140deg,var(--accent),var(--accent-2));
+    display:grid;place-items:center;font-weight:800;color:#0b0f17;box-shadow:var(--shadow)}
+  h1{font-size:20px; margin:0; letter-spacing:.2px}
+  .sub{color:var(--muted); font-size:13px; margin-top:2px}
+  .top-right{display:flex;align-items:center;gap:10px}
+  .updated{color:var(--faint);font-size:12px}
+  button.ghost{background:var(--panel);border:1px solid var(--border-2);color:var(--text);
+    padding:8px 14px;border-radius:10px;font-size:13px;cursor:pointer;transition:.15s}
+  button.ghost:hover{border-color:var(--accent);color:#fff}
+
+  .grid{display:grid;gap:16px}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(165px,1fr));margin-bottom:18px}
+  .kpi{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--border);
+    border-radius:var(--radius);padding:16px 16px 14px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .kpi .k-label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+  .kpi .k-val{font-size:26px;font-weight:750;margin-top:6px;line-height:1.1}
+  .kpi .k-note{color:var(--faint);font-size:12px;margin-top:4px}
+  .kpi .k-strip{position:absolute;left:0;top:0;height:100%;width:3px;background:var(--accent)}
+  .kpi.green .k-strip{background:var(--green)} .kpi.green .k-val{color:var(--green)}
+  .kpi.amber .k-strip{background:var(--amber)} .kpi.amber .k-val{color:var(--amber)}
+  .kpi.red .k-strip{background:var(--red)} .kpi.red .k-val{color:var(--red)}
+
+  .section-title{display:flex;align-items:center;gap:10px;margin:26px 2px 12px}
+  .section-title h2{font-size:15px;margin:0;letter-spacing:.3px}
+  .section-title .rule{height:1px;flex:1;background:linear-gradient(90deg,var(--border-2),transparent)}
+  .pill{font-size:11px;color:var(--muted);border:1px solid var(--border-2);border-radius:999px;padding:2px 9px}
+
+  .two-col{grid-template-columns:1.35fr 1fr}
+  @media(max-width:820px){.two-col{grid-template-columns:1fr}}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--border);
+    border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+  .card h3{margin:0 0 10px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .kv{margin:0 0 10px}
+  .kv .lbl{color:var(--faint);font-size:12px}
+  .kv .val{font-size:14px}
+  .trend{display:flex;align-items:flex-end;gap:10px;height:110px;padding-top:6px}
+  .bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
+  .bar .col{width:100%;max-width:46px;background:linear-gradient(180deg,var(--green),#2c9d6c);border-radius:6px 6px 0 0;
+    display:flex;align-items:flex-start;justify-content:center;color:#04150d;font-weight:800;font-size:12px;padding-top:5px}
+  .bar .cap{color:var(--faint);font-size:11px;text-align:center;white-space:nowrap}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{background:var(--panel-2);border:1px solid var(--border-2);border-radius:8px;padding:5px 10px;font-size:12.5px}
+  .chip.ok::before{content:"✓ ";color:var(--green)}
+  .banner{border:1px solid;border-radius:10px;padding:11px 13px;font-size:13px;margin-top:6px}
+  .banner.warn{border-color:rgba(245,183,78,.4);background:rgba(245,183,78,.08);color:#f5cf8e}
+  .banner.good{border-color:rgba(62,207,142,.35);background:rgba(62,207,142,.08);color:#8ee6be}
+
+  /* suggestions */
+  .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .tab{background:var(--panel);border:1px solid var(--border-2);color:var(--muted);padding:7px 13px;border-radius:999px;
+    font-size:13px;cursor:pointer;transition:.15s}
+  .tab.active{background:linear-gradient(140deg,var(--accent),var(--accent-2));color:#0b0f17;border-color:transparent;font-weight:650}
+  .sug-grid{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));margin-top:6px}
+  .sug{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--border);border-radius:var(--radius);
+    padding:16px;display:flex;flex-direction:column;gap:10px;position:relative;transition:.15s}
+  .sug:hover{border-color:var(--border-2);transform:translateY(-1px)}
+  .sug.queued{border-color:rgba(62,207,142,.5);box-shadow:0 0 0 1px rgba(62,207,142,.25) inset}
+  .sug .row1{display:flex;align-items:flex-start;gap:8px;justify-content:space-between}
+  .sug .title{font-size:15px;font-weight:650;line-height:1.3}
+  .sug .star{color:var(--star);font-size:14px}
+  .tags{display:flex;flex-wrap:wrap;gap:6px}
+  .tag{font-size:11px;border:1px solid var(--border-2);color:var(--muted);border-radius:999px;padding:2px 8px}
+  .tag.phase{color:#bcd0ff;border-color:rgba(110,168,254,.35)}
+  .tag.eff{color:#e6c98e;border-color:rgba(245,183,78,.3)}
+  .tag.hi{color:#0b0f17;background:var(--star);border-color:transparent;font-weight:700}
+  .sug .why{color:var(--muted);font-size:13px}
+  .sug .deps{color:var(--faint);font-size:12px}
+  .sug .deps b{color:var(--muted);font-weight:600}
+  .sug .actions{margin-top:auto;display:flex;gap:8px;align-items:center}
+  .btn{border:none;border-radius:10px;padding:9px 14px;font-size:13px;font-weight:650;cursor:pointer;transition:.15s}
+  .btn.add{background:linear-gradient(140deg,var(--accent),var(--accent-2));color:#0b0f17}
+  .btn.add:hover{filter:brightness(1.08)}
+  .btn.rm{background:transparent;border:1px solid var(--border-2);color:var(--muted)}
+  .btn.rm:hover{border-color:var(--red);color:var(--red)}
+  .queued-tag{color:var(--green);font-size:12.5px;font-weight:650}
+
+  .queuebar{position:sticky;bottom:0;margin-top:22px;background:rgba(15,20,32,.92);backdrop-filter:blur(8px);
+    border:1px solid var(--border-2);border-radius:14px;padding:14px 16px;display:flex;align-items:center;
+    justify-content:space-between;gap:14px;box-shadow:0 -6px 24px rgba(0,0,0,.4)}
+  .queuebar .qinfo{font-size:13.5px}
+  .queuebar .qinfo b{color:var(--green)}
+  .queuebar code{background:var(--panel-2);border:1px solid var(--border-2);padding:2px 7px;border-radius:6px;font-size:12px;color:#bcd0ff}
+  .empty{color:var(--faint);text-align:center;padding:30px;font-size:13px}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:#10331f;
+    border:1px solid rgba(62,207,142,.5);color:#c9f5df;padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;
+    transition:.25s;pointer-events:none}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.err{background:#331414;border-color:rgba(245,107,107,.5);color:#f5c9c9}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="logo">PS</div>
+      <div>
+        <h1>PhotoSphere AI — Insights</h1>
+        <div class="sub" id="sub">Local dashboard · reading the four-agent coordination files live</div>
+      </div>
+    </div>
+    <div class="top-right">
+      <span class="updated" id="updated"></span>
+      <button class="ghost" onclick="loadAll()">↻ Refresh</button>
+    </div>
+  </header>
+
+  <!-- KPIs -->
+  <div class="grid kpis" id="kpis"></div>
+
+  <!-- Insights detail -->
+  <div class="section-title"><h2>Project Insights</h2><span class="pill">from STATUS.md · reports/ · specs/ · roadmap</span><span class="rule"></span></div>
+  <div class="grid two-col">
+    <div class="card">
+      <h3>Current State</h3>
+      <div class="kv"><div class="lbl">Phase</div><div class="val" id="i-phase">—</div></div>
+      <div class="kv"><div class="lbl">Sprint goal</div><div class="val" id="i-sprint">—</div></div>
+      <div class="kv"><div class="lbl">Ready spec (Planner)</div><div class="val" id="i-spec">—</div></div>
+      <div id="i-banner"></div>
+    </div>
+    <div class="card">
+      <h3>Tester Pass-Rate Trend</h3>
+      <div class="trend" id="i-trend"></div>
+      <div style="margin-top:14px"><h3 style="margin-bottom:8px">Shipped Specs</h3><div class="chips" id="i-specs"></div></div>
+    </div>
+  </div>
+
+  <!-- Suggestions -->
+  <div class="section-title"><h2>Suggested Features — click to queue for next /orchestrate</h2><span class="rule"></span></div>
+  <div class="filters" style="margin:0 2px 12px">
+    <span style="color:var(--faint);font-size:12.5px;margin-right:4px">Show:</span>
+    <button class="tab active" data-f="high-impact" onclick="setFilter(this)">★ High-impact</button>
+    <button class="tab" data-f="all" onclick="setFilter(this)">All suggestions</button>
+    <button class="tab" data-f="queued" onclick="setFilter(this)">Queued</button>
+  </div>
+  <div class="grid sug-grid" id="sug-grid"></div>
+
+  <!-- Queue bar -->
+  <div class="queuebar" id="queuebar" style="display:none">
+    <div class="qinfo"><b id="q-count">0</b> feature(s) queued in <code>dashboard/FEATURE_QUEUE.md</code> — picked up automatically on your next <code>/orchestrate</code>.</div>
+    <button class="ghost" onclick="setFilter(document.querySelector('[data-f=queued]'))">View queue</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let SUG = [];
+let FILTER = 'high-impact';
+
+function toast(msg, isErr){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast show'+(isErr?' err':'');
+  clearTimeout(window._tt); window._tt=setTimeout(()=>t.className='toast'+(isErr?' err':''),2200);
+}
+function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+async function loadAll(){ await Promise.all([loadInsights(), loadSuggestions()]); }
+
+async function loadInsights(){
+  const r = await fetch('/api/insights'); const d = await r.json();
+  const s = d.status||{}; const reports = d.reports||[]; const specs = d.specs||[]; const rm = d.roadmap||{};
+  document.getElementById('updated').textContent = s.lastUpdated ? ('STATUS updated: '+s.lastUpdated) : '';
+
+  const latest = [...reports].reverse().find(x=>x.passed!=null);
+  const passStr = latest ? (latest.passed+'/'+latest.total) : '—';
+  const bugs = s.openBugs===0 ? '0' : (s.openBugsText? '⚠' : '—');
+  const rmPct = rm.available && rm.phase1Total ? Math.round(100*rm.phase1Done/rm.phase1Total) : null;
+
+  const kpis = [
+    {label:'Latest test run', val:passStr, note: latest? (latest.bugs!=null? latest.bugs+' bugs · '+latest.date : latest.date):'', cls: latest&&latest.passed===latest.total?'green':''},
+    {label:'Open bugs', val: s.openBugs===0?'0':(s.openBugsText?'!':'—'), note: s.openBugs===0?'clean':esc((s.openBugsText||'').slice(0,40)), cls: s.openBugs===0?'green':'red'},
+    {label:'Pending decisions', val: (s.pendingDecisions??'—'), note: s.hasBlockingDecision?'1 blocking':'awaiting input', cls: s.hasBlockingDecision?'amber':''},
+    {label:'Specs shipped', val: specs.length, note:'in specs/', cls:''},
+    {label:'Test runs logged', val: reports.length, note:'in reports/', cls:''},
+    {label:'Phase 1 checklist', val: rmPct!=null? rmPct+'%':'—', note: rm.available? rm.phase1Done+'/'+rm.phase1Total+' items':'', cls:''},
+  ];
+  document.getElementById('kpis').innerHTML = kpis.map(k=>
+    `<div class="kpi ${k.cls}"><div class="k-strip"></div><div class="k-label">${k.label}</div>
+     <div class="k-val">${k.val}</div><div class="k-note">${k.note||''}</div></div>`).join('');
+
+  document.getElementById('i-phase').textContent = s.phase || '—';
+  document.getElementById('i-sprint').textContent = s.sprint || '—';
+  document.getElementById('i-spec').textContent = s.readySpec || '—';
+  document.getElementById('i-banner').innerHTML = s.hasBlockingDecision
+    ? `<div class="banner warn">A decision is blocking further work — see Pending Decisions in STATUS.md (likely the reclassification-UI wireframe pick).</div>`
+    : (s.openBugs===0 ? `<div class="banner good">No open bugs. Latest regression clean.</div>`:'');
+
+  // trend
+  const runs = reports.filter(x=>x.passed!=null);
+  const maxTotal = Math.max(1, ...runs.map(x=>x.total||0));
+  document.getElementById('i-trend').innerHTML = runs.length ? runs.map(x=>{
+    const h = Math.max(14, Math.round(100*(x.total||0)/maxTotal));
+    return `<div class="bar"><div class="col" style="height:${h}px" title="${x.passed}/${x.total}">${x.passed}</div>
+      <div class="cap">${x.date.slice(5)}</div></div>`;
+  }).join('') : `<div class="empty">No dated reports yet.</div>`;
+
+  document.getElementById('i-specs').innerHTML = specs.length
+    ? specs.map(sp=>`<span class="chip ok">${esc(sp)}</span>`).join('')
+    : `<span class="empty">none</span>`;
+}
+
+async function loadSuggestions(){
+  const r = await fetch('/api/suggestions'); const d = await r.json();
+  SUG = d.suggestions||[]; render();
+}
+
+function setFilter(el){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active'); FILTER = el.dataset.f; render();
+}
+
+function render(){
+  let list = SUG.slice();
+  if(FILTER==='high-impact') list = list.filter(s=>s.tier==='high-impact');
+  else if(FILTER==='queued') list = list.filter(s=>s.queued);
+  // queued cards float up within view
+  list.sort((a,b)=> (b.queued?1:0)-(a.queued?1:0) || (a.tier==='high-impact'?-1:1)-(b.tier==='high-impact'?-1:1));
+
+  const g = document.getElementById('sug-grid');
+  g.innerHTML = list.length ? list.map(s=>{
+    const star = s.differentiator ? '<span class="star" title="Product differentiator">★</span>' : '';
+    const hiTag = s.tier==='high-impact' ? '<span class="tag hi">High-impact</span>' : '';
+    return `<div class="sug ${s.queued?'queued':''}">
+      <div class="row1"><div class="title">${esc(s.title)} ${star}</div></div>
+      <div class="tags"><span class="tag phase">${esc(s.phase)}</span><span class="tag eff">Effort ${esc(s.effort)}</span>${hiTag}<span class="tag">${esc(s.category)}</span></div>
+      <div class="why">${esc(s.rationale)}</div>
+      <div class="deps"><b>Depends on:</b> ${esc((s.dependencies||[]).join('; ')||'none noted')}</div>
+      <div class="actions">
+        ${s.queued
+          ? `<span class="queued-tag">✓ Queued for next orchestrate</span><button class="btn rm" onclick="dequeue('${s.id}')">Remove</button>`
+          : `<button class="btn add" onclick="queue('${s.id}')">＋ Queue for next /orchestrate</button>`}
+      </div>
+    </div>`;
+  }).join('') : `<div class="empty">Nothing here yet.</div>`;
+
+  const qn = SUG.filter(s=>s.queued).length;
+  const qb = document.getElementById('queuebar');
+  qb.style.display = qn>0 ? 'flex':'none';
+  document.getElementById('q-count').textContent = qn;
+}
+
+async function queue(id){
+  const r = await fetch('/api/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  const d = await r.json();
+  if(d.ok){ toast('Queued for next /orchestrate ✓'); const s=SUG.find(x=>x.id===id); if(s)s.queued=true; render(); }
+  else toast(d.reason==='already-queued'?'Already queued':'Could not queue', true);
+}
+async function dequeue(id){
+  const r = await fetch('/api/queue/'+encodeURIComponent(id),{method:'DELETE'});
+  const d = await r.json();
+  if(d.ok){ toast('Removed from queue'); const s=SUG.find(x=>x.id===id); if(s)s.queued=false; render(); }
+  else toast('Could not remove', true);
+}
+
+loadAll();
+setInterval(loadInsights, 60000);
+</script>
+</body>
+</html>

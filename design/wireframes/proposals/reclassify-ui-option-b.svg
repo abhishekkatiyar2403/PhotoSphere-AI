@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- Option B: single-list triage view with folder filter tabs + inline selects -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Organize</text>
+
+  <!-- Folder filter tabs (horizontal, counts inline) -->
+  <rect x="20" y="64" width="96" height="28" rx="14" fill="#3057d5"/>
+  <text x="34" y="83" font-size="12" fill="#ffffff">Food (12)</text>
+  <rect x="124" y="64" width="104" height="28" rx="14" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="138" y="83" font-size="12" fill="#333">People (34)</text>
+  <rect x="236" y="64" width="100" height="28" rx="14" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="250" y="83" font-size="12" fill="#333">Nature (8)</text>
+  <rect x="344" y="64" width="156" height="28" rx="14" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="358" y="83" font-size="12" fill="#333">Uncategorized (7)</text>
+  <rect x="508" y="64" width="118" height="28" rx="14" fill="#ffffff" stroke="#b9c0cf" stroke-dasharray="4 3"/>
+  <text x="522" y="83" font-size="12" fill="#3057d5">+ New folder</text>
+
+  <!-- Column headers -->
+  <text x="88" y="122" font-size="11" fill="#8a90a0" font-weight="bold">PHOTO</text>
+  <text x="250" y="122" font-size="11" fill="#8a90a0" font-weight="bold">LABELS / CONFIDENCE</text>
+  <text x="470" y="122" font-size="11" fill="#8a90a0" font-weight="bold">STATUS</text>
+  <text x="590" y="122" font-size="11" fill="#8a90a0" font-weight="bold">FOLDER / ACTION</text>
+
+  <!-- Row 1 -->
+  <rect x="20" y="132" width="760" height="64" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="32" y="140" width="48" height="48" fill="#d7dbe4"/>
+  <text x="92" y="158" font-size="12" fill="#333">IMG_2041.jpg</text>
+  <text x="92" y="176" font-size="10" fill="#8a90a0">uploaded 2026-07-02</text>
+  <text x="250" y="158" font-size="12" fill="#333">Food, Meal</text>
+  <text x="250" y="176" font-size="10" fill="#8a90a0">confidence 0.83</text>
+  <rect x="466" y="146" width="52" height="20" rx="10" fill="#dff0e1"/>
+  <text x="476" y="160" font-size="11" fill="#2c7a3d">done</text>
+  <rect x="586" y="146" width="140" height="26" rx="4" fill="#f2f4f8" stroke="#b9c0cf"/>
+  <text x="594" y="163" font-size="11" fill="#333">Food ▾</text>
+
+  <!-- Row 2 (failed) -->
+  <rect x="20" y="204" width="760" height="64" rx="6" fill="#ffffff" stroke="#e2b6b6"/>
+  <rect x="32" y="212" width="48" height="48" fill="#f3e2e2"/>
+  <text x="92" y="230" font-size="12" fill="#333">IMG_2044.jpg</text>
+  <text x="250" y="230" font-size="12" fill="#8a90a0">—</text>
+  <rect x="466" y="218" width="56" height="20" rx="10" fill="#f6dcdc"/>
+  <text x="475" y="232" font-size="11" fill="#b05555">failed</text>
+  <rect x="586" y="218" width="90" height="26" rx="4" fill="#b05555"/>
+  <text x="600" y="235" font-size="11" fill="#ffffff">Reclassify</text>
+
+  <!-- Row 3 (duplicate) -->
+  <rect x="20" y="276" width="760" height="64" rx="6" fill="#ffffff" stroke="#d8c9a2"/>
+  <rect x="32" y="284" width="48" height="48" fill="#f1ead6"/>
+  <text x="92" y="302" font-size="12" fill="#333">IMG_2050.jpg</text>
+  <text x="92" y="320" font-size="10" fill="#9a7d2e">duplicate of IMG_2041 (sha256)</text>
+  <text x="250" y="302" font-size="12" fill="#8a90a0">—</text>
+  <rect x="466" y="290" width="76" height="20" rx="10" fill="#f1ead6"/>
+  <text x="474" y="304" font-size="11" fill="#9a7d2e">duplicate</text>
+  <rect x="586" y="290" width="120" height="26" rx="4" fill="#9a7d2e"/>
+  <text x="596" y="307" font-size="11" fill="#ffffff">Not a duplicate?</text>
+
+  <!-- Row 4 (inline select open) -->
+  <rect x="20" y="348" width="760" height="64" rx="6" fill="#ffffff" stroke="#dde1e8"/>
+  <rect x="32" y="356" width="48" height="48" fill="#d7dbe4"/>
+  <text x="92" y="374" font-size="12" fill="#333">brunch.jpg</text>
+  <text x="250" y="374" font-size="12" fill="#333">Food, Meal</text>
+  <text x="250" y="392" font-size="10" fill="#8a90a0">confidence 0.79</text>
+  <rect x="466" y="362" width="52" height="20" rx="10" fill="#dff0e1"/>
+  <text x="476" y="376" font-size="11" fill="#2c7a3d">done</text>
+  <rect x="586" y="362" width="140" height="26" rx="4" fill="#ffffff" stroke="#3057d5"/>
+  <text x="594" y="379" font-size="11" fill="#333">Food ▾</text>
+  <!-- open dropdown -->
+  <rect x="586" y="392" width="140" height="76" rx="4" fill="#ffffff" stroke="#3057d5"/>
+  <text x="594" y="410" font-size="11" fill="#333">People</text>
+  <rect x="590" y="416" width="132" height="18" fill="#e8eefc"/>
+  <text x="594" y="429" font-size="11" fill="#1b3a9e">Vacation 2026</text>
+  <text x="594" y="448" font-size="11" fill="#333">Uncategorized</text>
+  <text x="594" y="463" font-size="10" fill="#3057d5">+ create new…</text>
+
+  <!-- Pagination -->
+  <rect x="20" y="490" width="80" height="26" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="36" y="507" font-size="12" fill="#333">‹ Prev</text>
+  <rect x="110" y="490" width="80" height="26" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="126" y="507" font-size="12" fill="#333">Next ›</text>
+  <text x="210" y="507" font-size="11" fill="#8a90a0">Showing 1–12 of 12</text>
+
+  <!-- Footnote -->
+  <text x="20" y="560" font-size="10" fill="#8a90a0">Option B — single-list triage table; folder tabs across the top double as the folder list with counts;</text>
+  <text x="20" y="574" font-size="10" fill="#8a90a0">move = inline folder select per row (with "+ create new" inside the dropdown); Reclassify inline on failed/duplicate rows.</text>
+</svg>

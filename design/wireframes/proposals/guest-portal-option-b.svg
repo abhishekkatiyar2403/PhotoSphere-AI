@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- U3 Option B: Preview-first landing, inline waiting overlay on the same page -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI</text>
+  <text x="640" y="30" fill="#cdd8f7" font-size="12">shared with client@example.com</text>
+
+  <!-- Header of the shared set -->
+  <text x="24" y="82" font-size="16" fill="#222" font-weight="bold">Akatiyar shared 2 folders with you</text>
+  <text x="24" y="102" font-size="11" fill="#8a90a0">Food (12) · Nature (8) · Download access · expires in 7 days</text>
+
+  <!-- Locked preview grid (thumbnails present but blurred/locked until approved) -->
+  <text x="24" y="132" font-size="11" fill="#8a90a0" font-weight="bold">PREVIEW — LOCKED UNTIL APPROVED</text>
+
+  <!-- row of locked tiles -->
+  <rect x="24" y="144" width="140" height="110" rx="6" fill="#d7dbe4"/>
+  <rect x="24" y="144" width="140" height="110" rx="6" fill="#1b2440" opacity="0.35"/>
+  <text x="86" y="204" font-size="16" fill="#ffffff">🔒</text>
+  <rect x="176" y="144" width="140" height="110" rx="6" fill="#d7dbe4"/>
+  <rect x="176" y="144" width="140" height="110" rx="6" fill="#1b2440" opacity="0.35"/>
+  <text x="238" y="204" font-size="16" fill="#ffffff">🔒</text>
+  <rect x="328" y="144" width="140" height="110" rx="6" fill="#d7dbe4"/>
+  <rect x="328" y="144" width="140" height="110" rx="6" fill="#1b2440" opacity="0.35"/>
+  <text x="390" y="204" font-size="16" fill="#ffffff">🔒</text>
+  <rect x="480" y="144" width="140" height="110" rx="6" fill="#d7dbe4"/>
+  <rect x="480" y="144" width="140" height="110" rx="6" fill="#1b2440" opacity="0.35"/>
+  <text x="542" y="204" font-size="16" fill="#ffffff">🔒</text>
+  <rect x="632" y="144" width="140" height="110" rx="6" fill="#d7dbe4"/>
+  <rect x="632" y="144" width="140" height="110" rx="6" fill="#1b2440" opacity="0.35"/>
+  <text x="694" y="204" font-size="16" fill="#ffffff">🔒</text>
+
+  <!-- Sticky action / status bar over the preview -->
+  <rect x="24" y="278" width="752" height="150" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+
+  <!-- LEFT: request-access CTA (initial state) -->
+  <rect x="40" y="294" width="352" height="118" rx="8" fill="#f7f8fa" stroke="#eef1f6"/>
+  <text x="56" y="316" font-size="11" fill="#8a90a0" font-weight="bold">INITIAL STATE</text>
+  <text x="56" y="342" font-size="13" fill="#222" font-weight="bold">Ask for access to these photos</text>
+  <text x="56" y="362" font-size="10" fill="#8a90a0">The owner approves with a one-time code — no</text>
+  <text x="56" y="376" font-size="10" fill="#8a90a0">account or password needed for you.</text>
+  <rect x="56" y="388" width="180" height="34" rx="6" fill="#3057d5"/>
+  <text x="94" y="410" font-size="12" fill="#ffffff" font-weight="bold">Request access</text>
+
+  <!-- RIGHT: waiting overlay state (same page, swaps in) -->
+  <rect x="408" y="294" width="352" height="118" rx="8" fill="#e8eefc" stroke="#c3d1f5"/>
+  <text x="424" y="316" font-size="11" fill="#1b3a9e" font-weight="bold">AFTER REQUEST — WAITING</text>
+  <circle cx="440" cy="352" r="14" fill="none" stroke="#c3d1f5" stroke-width="4"/>
+  <path d="M440 338 A14 14 0 0 1 454 352" fill="none" stroke="#3057d5" stroke-width="4" stroke-linecap="round"/>
+  <text x="466" y="348" font-size="13" fill="#1b3a9e" font-weight="bold">Waiting for owner approval…</text>
+  <text x="466" y="366" font-size="10" fill="#4a63a8">Auto-checking. This bar unlocks the grid</text>
+  <text x="466" y="380" font-size="10" fill="#4a63a8">above the moment you are approved.</text>
+  <text x="424" y="404" font-size="10" fill="#4a63a8">Denied/expired → inline message + "Request again".</text>
+
+  <!-- Post-approval note -->
+  <text x="24" y="456" font-size="11" fill="#8a90a0" font-weight="bold">AFTER APPROVAL (same page unlocks)</text>
+  <text x="24" y="476" font-size="10" fill="#8a90a0">The locks lift in place, tiles become the live /browse grid + PhotoViewer. Each photo shows a Download</text>
+  <text x="24" y="490" font-size="10" fill="#8a90a0">button only when the grant is download/download_all; view-only guests just get the fullscreen viewer, no download.</text>
+  <rect x="24" y="500" width="150" height="30" rx="4" fill="#3057d5"/>
+  <text x="52" y="520" font-size="11" fill="#ffffff">Download this photo</text>
+  <rect x="184" y="500" width="150" height="30" rx="4" fill="#eef1f6" stroke="#dde1e8"/>
+  <text x="200" y="520" font-size="11" fill="#8a90a0">(hidden if view-only)</text>
+
+  <!-- Footnote -->
+  <text x="24" y="560" font-size="10" fill="#8a90a0">U3 Option B — one page throughout: a locked preview of the shared photos sets expectations up front; a status bar swaps</text>
+  <text x="24" y="574" font-size="10" fill="#8a90a0">request→waiting→unlocked in place (no page hop). More inviting, but shows locked tiles before approval — a product call.</text>
+</svg>

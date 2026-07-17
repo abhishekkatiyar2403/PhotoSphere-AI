@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- P4 Option A: per-folder kebab menu on each sidebar row -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Organize</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="48" width="220" height="552" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="16" y="76" font-size="12" fill="#8a90a0" font-weight="bold">MY PHOTOS</text>
+
+  <!-- Folder rows with kebab (each row shows the ⋯ on hover) -->
+  <rect x="8" y="88" width="204" height="30" rx="4" fill="#e8eefc"/>
+  <text x="18" y="108" font-size="13" fill="#1b3a9e" font-weight="bold">Nature</text>
+  <text x="168" y="108" font-size="12" fill="#1b3a9e">8</text>
+  <text x="192" y="108" font-size="15" fill="#1b3a9e" font-weight="bold">⋯</text>
+
+  <text x="18" y="140" font-size="13" fill="#333">People</text><text x="168" y="140" font-size="12" fill="#8a90a0">34</text><text x="192" y="140" font-size="15" fill="#b9c0cf">⋯</text>
+  <text x="18" y="168" font-size="13" fill="#333">Food</text><text x="168" y="168" font-size="12" fill="#8a90a0">12</text><text x="192" y="168" font-size="15" fill="#b9c0cf">⋯</text>
+  <text x="18" y="196" font-size="13" fill="#333">Vacation 2026</text><text x="168" y="196" font-size="12" fill="#8a90a0">3</text><text x="192" y="196" font-size="15" fill="#b9c0cf">⋯</text>
+  <text x="18" y="224" font-size="13" fill="#8a90a0">Unfiled</text><text x="168" y="224" font-size="12" fill="#8a90a0">2</text>
+
+  <!-- Open kebab menu popping off the Nature row -->
+  <rect x="128" y="116" width="150" height="96" rx="6" fill="#ffffff" stroke="#3057d5"/>
+  <text x="142" y="138" font-size="12" fill="#333">Rename</text>
+  <rect x="132" y="146" width="142" height="24" fill="#e8eefc"/>
+  <text x="142" y="163" font-size="12" fill="#1b3a9e">Merge into…</text>
+  <line x1="132" y1="176" x2="274" y2="176" stroke="#eef1f6"/>
+  <text x="142" y="196" font-size="12" fill="#9a5555">Delete folder</text>
+
+  <!-- Main area: the Merge modal (the real interaction), overlaid -->
+  <rect x="240" y="72" width="536" height="150" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="260" y="98" font-size="14" fill="#222" font-weight="bold">Merge “Nature” into another folder</text>
+  <text x="260" y="118" font-size="11" fill="#8a90a0">All 8 photos move to the destination; “Nature” is then removed.</text>
+  <text x="260" y="140" font-size="9" fill="#8a90a0" font-weight="bold">DESTINATION</text>
+  <rect x="260" y="146" width="240" height="26" rx="4" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="270" y="164" font-size="12" fill="#333">People — 34 photos</text>
+  <text x="486" y="164" font-size="11" fill="#8a90a0">▾</text>
+  <rect x="520" y="146" width="110" height="26" rx="5" fill="#3057d5"/>
+  <text x="536" y="164" font-size="12" fill="#ffffff" font-weight="bold">Merge folders</text>
+  <rect x="638" y="146" width="70" height="26" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="656" y="164" font-size="12" fill="#5a6070">Cancel</text>
+  <text x="260" y="196" font-size="10" fill="#8a90a0">After merge, “Nature” will show 34 + 8 = 42 photos under People.</text>
+
+  <!-- Merge BLOCKED state (F1: shared with a guest) -->
+  <rect x="240" y="238" width="536" height="96" rx="10" fill="#f3e2e2" stroke="#e2b6b6"/>
+  <rect x="240" y="238" width="6" height="96" rx="3" fill="#c46b6b"/>
+  <text x="260" y="264" font-size="13" fill="#9a5555" font-weight="bold">Can’t merge — this folder is shared with a guest</text>
+  <text x="260" y="286" font-size="11" fill="#9a5555">“Nature” is currently shared with client@example.com. Revoke the share first, then merge.</text>
+  <text x="260" y="304" font-size="10" fill="#9a5555">Server returned 409. Nothing was moved or deleted.</text>
+  <rect x="260" y="310" width="130" height="20" rx="4" fill="#ffffff" stroke="#c46b6b"/>
+  <text x="272" y="324" font-size="11" fill="#9a5555" font-weight="bold">Go to Guests →</text>
+
+  <!-- Delete confirm (F2: photos go to Unfiled) -->
+  <rect x="240" y="350" width="536" height="118" rx="10" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="260" y="376" font-size="14" fill="#222" font-weight="bold">Delete “Food”?</text>
+  <rect x="260" y="388" width="496" height="40" rx="6" fill="#eef1f6"/>
+  <text x="274" y="404" font-size="11" fill="#333" font-weight="bold">The 12 photos in this folder will move to Unfiled — they are not deleted.</text>
+  <text x="274" y="420" font-size="10" fill="#8a90a0">You can re-file them any time from the Unfiled bucket. Only the folder is removed.</text>
+  <rect x="260" y="436" width="120" height="26" rx="5" fill="#b05555"/>
+  <text x="278" y="454" font-size="12" fill="#ffffff" font-weight="bold">Delete folder</text>
+  <rect x="388" y="436" width="70" height="26" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="406" y="454" font-size="12" fill="#5a6070">Cancel</text>
+
+  <!-- Footnote -->
+  <text x="240" y="560" font-size="10" fill="#8a90a0">Option A — a per-folder “⋯” kebab on each sidebar row (Rename / Merge into… / Delete). Rename edits in place; Merge and Delete open</text>
+  <text x="240" y="574" font-size="10" fill="#8a90a0">small modals. Least chrome, discoverable per-folder; the F1 shared-block and F2 “photos move to Unfiled” live in the confirm dialogs.</text>
+</svg>

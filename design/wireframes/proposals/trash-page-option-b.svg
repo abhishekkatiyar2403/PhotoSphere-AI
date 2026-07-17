@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600" font-family="Helvetica, Arial, sans-serif">
+  <!-- Trash Option B: virtual "Trash" row folded into /organize's sidebar -->
+  <rect x="0" y="0" width="800" height="600" fill="#f7f8fa"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="800" height="48" fill="#3057d5"/>
+  <text x="20" y="30" fill="#ffffff" font-size="16" font-weight="bold">PhotoSphere AI — Organize</text>
+  <text x="700" y="30" fill="#cdd8f7" font-size="12">akatiyar</text>
+
+  <!-- Sidebar with virtual Trash row -->
+  <rect x="0" y="48" width="200" height="552" fill="#ffffff" stroke="#dde1e8"/>
+  <text x="16" y="76" font-size="12" fill="#8a90a0" font-weight="bold">MY PHOTOS</text>
+  <text x="18" y="100" font-size="13" fill="#333">Nature</text>
+  <text x="18" y="128" font-size="13" fill="#333">People</text>
+  <text x="18" y="156" font-size="13" fill="#333">Food</text>
+  <text x="18" y="184" font-size="13" fill="#8a90a0">Unfiled</text>
+
+  <line x1="12" y1="204" x2="188" y2="204" stroke="#eef1f6"/>
+
+  <!-- Trash row, selected/active -->
+  <rect x="8" y="216" width="184" height="30" rx="4" fill="#f3e2e2"/>
+  <text x="18" y="236" font-size="13" fill="#9a5555" font-weight="bold">🗑 Trash</text>
+  <rect x="150" y="222" width="30" height="18" rx="9" fill="#c46b6b"/>
+  <text x="158" y="235" font-size="10" fill="#ffffff" font-weight="bold">3</text>
+
+  <!-- Main area: grid area now shows trashed items with the same shell -->
+  <text x="216" y="76" font-size="15" fill="#222" font-weight="bold">Trash — 3 items</text>
+  <rect x="654" y="60" width="122" height="26" rx="5" fill="#f3e2e2" stroke="#e2b6b6"/>
+  <text x="666" y="77" font-size="11" fill="#9a5555" font-weight="bold">Empty trash…</text>
+
+  <!-- Cards styled like the existing photo grid, but with Recover/Delete-forever instead of Move -->
+  <rect x="216" y="96" width="160" height="130" rx="6" fill="#dfe3ea" stroke="#e2b6b6"/>
+  <rect x="224" y="104" width="144" height="80" rx="4" fill="#eef1f6"/>
+  <text x="228" y="196" font-size="10" fill="#222" font-weight="bold">IMG_0921.jpg</text>
+  <rect x="228" y="200" width="60" height="16" rx="8" fill="#f3e2e2"/>
+  <text x="234" y="212" font-size="8" fill="#9a5555" font-weight="bold">1 day left</text>
+  <rect x="224" y="220" width="70" height="20" rx="4" fill="#3057d5"/>
+  <text x="232" y="234" font-size="9" fill="#ffffff" font-weight="bold">Recover</text>
+
+  <rect x="388" y="96" width="160" height="130" rx="6" fill="#dfe3ea" stroke="#dde1e8"/>
+  <rect x="396" y="104" width="144" height="80" rx="4" fill="#eef1f6"/>
+  <text x="400" y="196" font-size="10" fill="#222" font-weight="bold">IMG_1050.jpg</text>
+  <rect x="400" y="200" width="70" height="16" rx="8" fill="#eef1f6"/>
+  <text x="406" y="212" font-size="8" fill="#5a6070" font-weight="bold">6 days left</text>
+  <rect x="396" y="220" width="70" height="20" rx="4" fill="#3057d5"/>
+  <text x="404" y="234" font-size="9" fill="#ffffff" font-weight="bold">Recover</text>
+
+  <!-- Folder card, mixed into the same grid -->
+  <rect x="560" y="96" width="160" height="130" rx="6" fill="#eef1f6" stroke="#dde1e8"/>
+  <text x="570" y="130" font-size="20" fill="#8a90a0">📁</text>
+  <text x="570" y="196" font-size="10" fill="#222" font-weight="bold">Food (12 photos)</text>
+  <rect x="570" y="200" width="70" height="16" rx="8" fill="#eef1f6"/>
+  <text x="576" y="212" font-size="8" fill="#5a6070" font-weight="bold">4 days left</text>
+  <rect x="570" y="220" width="70" height="20" rx="4" fill="#3057d5"/>
+  <text x="578" y="234" font-size="9" fill="#ffffff" font-weight="bold">Recover</text>
+
+  <!-- kebab / delete-forever exposed via a small menu to keep card compact -->
+  <text x="352" y="112" font-size="13" fill="#9a5555" font-weight="bold">⋯</text>
+  <rect x="304" y="118" width="140" height="52" rx="6" fill="#ffffff" stroke="#c46b6b"/>
+  <text x="316" y="138" font-size="10" fill="#9a5555" font-weight="bold">Delete forever</text>
+  <text x="316" y="158" font-size="9" fill="#8a90a0">Cannot be undone</text>
+
+  <!-- Restore-collision inline state -->
+  <rect x="216" y="256" width="504" height="88" rx="8" fill="#f3e2e2" stroke="#e2b6b6"/>
+  <rect x="216" y="256" width="6" height="88" rx="3" fill="#c46b6b"/>
+  <text x="232" y="278" font-size="12" fill="#9a5555" font-weight="bold">Can't recover "Nature" — name already in use</text>
+  <text x="232" y="294" font-size="10" fill="#9a5555">A live folder named "Nature" already exists.</text>
+  <rect x="232" y="304" width="170" height="24" rx="5" fill="#3057d5"/>
+  <text x="242" y="320" font-size="10" fill="#ffffff" font-weight="bold">Merge into existing</text>
+  <rect x="412" y="304" width="200" height="24" rx="5" fill="#ffffff" stroke="#b9c0cf"/>
+  <text x="422" y="320" font-size="10" fill="#5a6070">Rename &amp; restore as "Nature (2)"</text>
+
+  <!-- Empty trash confirm -->
+  <rect x="260" y="380" width="380" height="76" rx="10" fill="#ffffff" stroke="#c46b6b" stroke-width="2"/>
+  <text x="280" y="404" font-size="12" fill="#9a5555" font-weight="bold">Empty trash? This cannot be undone.</text>
+  <text x="280" y="422" font-size="10" fill="#333">Permanently deletes 2 photos and 1 folder right now.</text>
+  <rect x="280" y="430" width="120" height="20" rx="4" fill="#b05555"/>
+  <text x="292" y="444" font-size="10" fill="#ffffff" font-weight="bold">Empty trash now</text>
+
+  <!-- Footnote -->
+  <text x="216" y="560" font-size="10" fill="#8a90a0">Option B — a virtual "Trash" sidebar row (like Unfiled) reuses the existing /organize shell; clicking it swaps the</text>
+  <text x="216" y="574" font-size="10" fill="#8a90a0">main grid to trashed photos+folders with Recover/Delete-forever. No new page/route; smallest build footprint.</text>
+</svg>
