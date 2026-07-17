@@ -30,6 +30,7 @@ import {
   unfiledPhotosApi,
 } from "@/lib/api";
 import { PhotoViewer, ViewerPhotoRef } from "@/components/PhotoViewer";
+import UiV2Banner from "@/components/UiV2Banner";
 
 const PAGE_LIMIT = 12;
 
@@ -266,6 +267,7 @@ function BrowsePageInner() {
           — Browse
         </h1>
         <div className="dashboard-topbar-right">
+          <UiV2Banner href="/browse/v2" />
           <Link href="/upload" className="dashboard-guests-link" data-testid="browse-upload-link">
             Upload
           </Link>

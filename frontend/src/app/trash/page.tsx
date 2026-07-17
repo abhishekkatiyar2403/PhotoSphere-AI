@@ -28,6 +28,7 @@ import {
   TrashFolderItem,
   TrashPhotoItem,
 } from "@/lib/api";
+import UiV2Banner from "@/components/UiV2Banner";
 
 const PAGE_LIMIT = 20;
 const URGENT_DAYS = 2;
@@ -445,6 +446,7 @@ export default function TrashPage() {
           — Trash
         </h1>
         <div className="dashboard-topbar-right">
+          <UiV2Banner href="/trash/v2" />
           <Link href="/upload" className="dashboard-guests-link">Upload</Link>
           <Link href="/organize" className="dashboard-guests-link">Organize</Link>
           <Link href="/browse" className="dashboard-guests-link">Browse</Link>

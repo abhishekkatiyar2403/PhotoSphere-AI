@@ -3,6 +3,7 @@ import { deleteObject } from "./storage";
 import { prisma } from "./prisma";
 import { thumbnailKey } from "./storageKeys";
 import { logAudit, type AuditAction } from "./audit";
+import { logger } from "./logger";
 
 /**
  * Shared PERMANENT purge logic (specs/trash-system.md), used by BOTH
@@ -87,8 +88,7 @@ export async function purgePhoto(
       await deleteObject(thumbnailKey(photo.ownerId, photo.id, size));
     }
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[purge] MinIO cleanup failed for photo ${photo.id} (DB row already removed):`, err);
+    logger.error({ err, photoId: photo.id }, "MinIO cleanup failed (DB row already removed)");
   }
 
   logAudit({
@@ -186,4 +186,40 @@ export async function purgeFolder(
       photosPreserved: alreadyTrashedPhotos.length,
     },
   });
+}
+
+/**
+ * Best-effort S3/MinIO cleanup for EVERY photo an owner has (live or
+ * trashed, in any folder or none) — used ONLY by account deletion
+ * (2026-07-13 backend audit #4). Deliberately does NOT touch any DB rows:
+ * the caller deletes the `User` row immediately after this, and Prisma's own
+ * cascades (`onDelete: Cascade` on every Photo/Folder/Collection -> User
+ * relation) remove every row in one transaction — looping purgePhoto() here
+ * would be redundant per-row DB work for no benefit. This function's ONLY
+ * job is making sure the account's files don't outlive its database rows.
+ *
+ * Same best-effort posture as purgePhoto's own storage cleanup: a failed
+ * delete is logged and the sweep continues — a stuck S3 object must never
+ * block the account deletion itself.
+ */
+export async function purgeAllStorageForOwner(ownerId: string): Promise<{ photosCleaned: number }> {
+  const photos = await prisma.photo.findMany({
+    where: { ownerId },
+    select: { id: true, s3Key: true },
+  });
+
+  let photosCleaned = 0;
+  for (const photo of photos) {
+    try {
+      await deleteObject(photo.s3Key);
+      for (const size of THUMBNAIL_SIZES) {
+        await deleteObject(thumbnailKey(ownerId, photo.id, size));
+      }
+      photosCleaned += 1;
+    } catch (err) {
+      logger.error({ err, photoId: photo.id }, "account-deletion storage cleanup failed");
+    }
+  }
+
+  return { photosCleaned };
 }

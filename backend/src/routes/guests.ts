@@ -1,12 +1,21 @@
 import crypto from "node:crypto";
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { ZodError } from "zod";
 import { asyncHandler } from "../lib/asyncHandler";
 import { logAudit } from "../lib/audit";
 import { hashGuestToken, revokeGuestSessionsForGuest } from "../lib/guestSession";
 import { prisma } from "../lib/prisma";
-import { addGuestFoldersSchema, createGuestSchema, updateGuestPermissionSchema } from "../lib/validation";
+import {
+  addGuestFoldersSchema,
+  createGuestSchema,
+  sendGuestInviteSchema,
+  updateGuestPermissionSchema,
+} from "../lib/validation";
 import { requireAuth } from "../middleware/requireAuth";
+import { checkGuestLimit } from "../lib/plans";
+import { sendGuestInviteEmail } from "../lib/notifications";
+import { logger } from "../lib/logger";
 
 /**
  * Owner share-management routes (specs/guest-access-otp.md §5). Every route:
@@ -41,6 +50,14 @@ router.post(
 
     const ownerId = req.user!.id;
     const uniqueFolderIds = [...new Set(input.folderIds)];
+
+    // Plan enforcement (2026-07-13 backend audit #7): free tier caps active
+    // guests. Checked before any write, same "reject before creating
+    // anything" posture as the folder-ownership check right below.
+    const limitError = await checkGuestLimit(ownerId);
+    if (limitError) {
+      return res.status(402).json({ error: limitError });
+    }
 
     // Validate EVERY folder belongs to a collection this owner owns. 404 on
     // any miss, before any write — never partially create.
@@ -104,6 +121,15 @@ router.post(
     // token is surfaced HERE, once — never persisted in plaintext.
     const inviteUrl = `${FRONTEND_ORIGIN}/g/${rawToken}`;
 
+    // NOTE (2026-07-13, revised): does NOT auto-email the guest on creation.
+    // Abhishek's call: generating the link and sending it are two separate,
+    // owner-controlled steps — the frontend shows the link with a "Send"
+    // button, and POST /api/guests/:id/send-invite (below) fires the actual
+    // email only when clicked. This also matches how a real inbox works:
+    // the owner sees the link BEFORE it goes anywhere, and can choose to
+    // share it some other way (Slack, WhatsApp, in person) without an email
+    // going out at all.
+
     // Audit (specs/audit-and-polish.md §A2): fire-and-forget, POST-commit — the
     // share is already created. A failed audit write can't undo it.
     logAudit({
@@ -129,6 +155,63 @@ router.post(
       inviteUrl,
       expiresAt,
     });
+  }),
+);
+
+// Resend-friendly: an owner clicking "Send" a second time (guest says they
+// didn't get it) shouldn't be blocked, but this is still a real email-send
+// button reachable by anyone with a session — cap it well above normal use.
+const sendInviteRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: process.env.NODE_ENV === "test" ? 1000 : 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many invite emails sent. Please try again later." },
+});
+
+/**
+ * POST /api/guests/:id/send-invite — the explicit "Send" action (2026-07-13,
+ * revised #9): generating the link (POST /api/guests above) and emailing it
+ * are two separate, owner-controlled steps. The frontend already has the
+ * inviteUrl from the create response (or from a page that still has it in
+ * memory) and passes it back here — the backend never re-derives or
+ * re-persists the raw token (only its hash exists in the DB, by design), so
+ * this is the only way to (re)send it. Safe to call more than once — each
+ * click is just another email.
+ */
+router.post(
+  "/:id/send-invite",
+  requireAuth,
+  sendInviteRateLimiter,
+  asyncHandler(async (req, res) => {
+    let input;
+    try {
+      input = sendGuestInviteSchema.parse(req.body);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return res.status(400).json({ error: "Validation failed", details: err.flatten() });
+      }
+      throw err;
+    }
+
+    const ownerId = req.user!.id;
+    const guest = await prisma.guestUser.findUnique({ where: { id: req.params.id } });
+    if (!guest || guest.createdBy !== ownerId) {
+      return res.status(404).json({ error: "Guest not found" });
+    }
+
+    try {
+      await sendGuestInviteEmail({
+        guestEmail: guest.email,
+        ownerName: req.user!.name,
+        inviteUrl: input.inviteUrl,
+      });
+    } catch (err) {
+      logger.error({ err, guestId: guest.id }, "failed to send guest invite email");
+      return res.status(502).json({ error: "Failed to send the invite email. Please try again." });
+    }
+
+    return res.status(200).json({ sent: true });
   }),
 );
 

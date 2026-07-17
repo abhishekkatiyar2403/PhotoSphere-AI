@@ -28,6 +28,16 @@ export const requireGuest = asyncHandler(async (req: Request, res: Response, nex
     return res.status(401).json({ error: "Unauthorized" });
   }
 
+  // Fire-and-forget (2026-07-13 backend audit #17): lastUsedAt was set once
+  // at session CREATION and never touched again, but routes/guests.ts
+  // surfaces it to the owner as "last access" — actively misleading (it was
+  // really "first access"). Update on every authenticated request rather than
+  // await it inline — this is telemetry, not something a request should ever
+  // wait on or fail because of.
+  prisma.guestSession
+    .update({ where: { id: session.id }, data: { lastUsedAt: new Date() } })
+    .catch(() => undefined);
+
   req.guest = { guestUserId: session.guestUserId, sessionId: session.id };
   next();
 });

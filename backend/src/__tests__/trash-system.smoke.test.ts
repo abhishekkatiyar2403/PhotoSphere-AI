@@ -1093,6 +1093,44 @@ describe("runTrashPurgeJob — the daily auto-purge job", () => {
     // Idempotent re-run.
     await expect(runTrashPurgeJob()).resolves.not.toThrow();
   });
+
+  // 2026-07-13 backend audit #14: stale pending/processing photo
+  // reconciliation, piggybacked on this same job.
+  it("reconciles a photo stuck 'processing' with no active job into 'failed', but leaves a genuinely fresh one alone", async () => {
+    if (skipInfra()) return;
+
+    const stalePhoto = await seedRealPhoto({ ownerId, status: "processing" });
+    // Backdate updatedAt past the staleness threshold — Prisma's @updatedAt
+    // auto-manages this on every write, so a raw query is the only way to
+    // set it to an arbitrary past value directly.
+    await prisma.$executeRaw`UPDATE photos SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = ${stalePhoto.id}`;
+
+    const freshPhoto = await seedRealPhoto({ ownerId, status: "pending" }); // updatedAt defaults to now — well within the window
+
+    const result = await runTrashPurgeJob();
+    expect(result.staleReconciliation.photosReconciled).toBeGreaterThanOrEqual(1);
+
+    const staleRow = await prisma.photo.findUnique({ where: { id: stalePhoto.id } });
+    expect(staleRow?.aiClassificationStatus).toBe("failed");
+
+    const freshRow = await prisma.photo.findUnique({ where: { id: freshPhoto.id } });
+    expect(freshRow?.aiClassificationStatus).toBe("pending");
+  });
+
+  it("does NOT reconcile a stale-by-time photo that still has an active processing_jobs row", async () => {
+    if (skipInfra()) return;
+
+    const photo = await seedRealPhoto({ ownerId, status: "processing" });
+    await prisma.$executeRaw`UPDATE photos SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = ${photo.id}`;
+    await prisma.processingJob.create({
+      data: { photoId: photo.id, jobType: "pipeline", status: "active" },
+    });
+
+    await runTrashPurgeJob();
+
+    const row = await prisma.photo.findUnique({ where: { id: photo.id } });
+    expect(row?.aiClassificationStatus).toBe("processing"); // untouched — a real job is still backing it
+  });
 });
 
 // ---------------------------------------------------------------------------

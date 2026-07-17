@@ -1,5 +1,10 @@
 import { prisma } from "./prisma";
-import { DEGENERATE_PHASH, DUPLICATE_HAMMING_THRESHOLD, hammingDistance } from "./phash";
+import {
+  DEGENERATE_PHASH,
+  DUPLICATE_HAMMING_THRESHOLD,
+  hammingDistance,
+  isLowEntropyPHash,
+} from "./phash";
 
 /**
  * Two-phase dedup gate queries (specs/ai-classification.md §5), extracted
@@ -83,7 +88,12 @@ export async function findNearDuplicateOriginal(
   photo: DedupSubject,
   phash: string,
 ): Promise<string | null> {
-  if (phash === DEGENERATE_PHASH) return null;
+  // Low-entropy guard (2026-07-12, generalizes the exact-degenerate check):
+  // near-flat images (skies, sunsets, plain walls) carry too little gradient
+  // structure for Hamming distance to mean anything — two DIFFERENT sunsets
+  // can sit within any reasonable radius. They only dedup via the SHA-256
+  // exact pass, same policy as fully-flat images always had.
+  if (phash === DEGENERATE_PHASH || isLowEntropyPHash(phash)) return null;
 
   const candidates = await prisma.photo.findMany({
     where: {
@@ -98,7 +108,8 @@ export async function findNearDuplicateOriginal(
   });
 
   for (const candidate of candidates) {
-    if (!candidate.phash || candidate.phash === DEGENERATE_PHASH) continue;
+    if (!candidate.phash || candidate.phash === DEGENERATE_PHASH || isLowEntropyPHash(candidate.phash))
+      continue;
     if (hammingDistance(phash, candidate.phash) < DUPLICATE_HAMMING_THRESHOLD) {
       return candidate.id;
     }

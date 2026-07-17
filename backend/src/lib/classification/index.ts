@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import sharp from "sharp";
 import { RekognitionClient, DetectLabelsCommand } from "@aws-sdk/client-rekognition";
 
 /**
@@ -48,6 +49,49 @@ export interface ClassificationProvider {
   classify(imageBuffer: Buffer): Promise<ClassificationResult>;
 }
 
+const REKOGNITION_MAX_DIMENSION = 1600;
+const REKOGNITION_JPEG_QUALITY = 82;
+
+/**
+ * Downscales + re-encodes an image buffer before sending it to ANY
+ * Rekognition API — DetectLabels here, and DetectFaces/SearchFacesByImage/
+ * IndexFaces in faces.ts, all of which share AWS's hard 5MB Image.Bytes
+ * limit (2026-07-12 parameter audit, "the biggest reliability gap in the
+ * audit"). Full-resolution phone photos routinely exceed it: a 12MP iPhone
+ * JPEG is 3-6MB; HEIC decoded via the worker's decodeToJpeg (quality 90)
+ * commonly lands 4-10MB; 48-108MP Android JPEGs are 8-15MB. Every photo
+ * over the limit throws ImageTooLargeException — UNCAUGHT in classify()
+ * (the whole job fails, photo stuck unclassified) and silently degraded to
+ * the flat "People" folder in faces.ts's face-refinement path (caught
+ * there, but real per-person/Group sorting never happens). On a modern-
+ * phone library this can affect a meaningful fraction of photos — none of
+ * the mapping/vocabulary tuning in categoryMapping.ts matters for a photo
+ * that never reaches classification at all.
+ *
+ * Resizing the longest side to 1600px at JPEG quality 82 brings virtually
+ * every real photo under ~500KB with no measurable accuracy loss —
+ * DetectLabels/DetectFaces both operate on far smaller internal
+ * representations already, so this doesn't trade accuracy for reliability,
+ * it just removes a self-inflicted failure mode. Best-effort: any resize
+ * failure sends the ORIGINAL buffer rather than failing classification
+ * outright — Rekognition's own error (if any) is still the honest failure
+ * mode, just never a self-inflicted one.
+ */
+export async function prepareForRekognition(imageBuffer: Buffer): Promise<Buffer> {
+  try {
+    return await sharp(imageBuffer)
+      .rotate() // respect EXIF orientation before resizing
+      .resize(REKOGNITION_MAX_DIMENSION, REKOGNITION_MAX_DIMENSION, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: REKOGNITION_JPEG_QUALITY })
+      .toBuffer();
+  } catch {
+    return imageBuffer;
+  }
+}
+
 // Extended per specs/ai-classification.md §3 so the category-mapping table
 // is exercisable end-to-end: People (multi-category priority vs Nature),
 // Food, Documents, Nature aliases, Animals, Vehicles, and one deliberately
@@ -91,9 +135,14 @@ class MockClassificationProvider implements ClassificationProvider {
 /**
  * Real classification via Amazon Rekognition's DetectLabels API. Sends the
  * image bytes directly in the request (no S3 reference needed — works the
- * same whether storage is local MinIO or real S3) and asks for up to 15
+ * same whether storage is local MinIO or real S3) and asks for up to 30
  * labels at >=50% confidence, letting categoryMapping.ts's own
  * CONFIDENCE_THRESHOLD (60%) do the real "is this good enough" gating.
+ * MaxLabels raised from 15 to 30 (2026-07-12 parameter audit): Rekognition
+ * bills per IMAGE, not per label, so this is free extra evidence — a rich
+ * scene can carry 20+ labels above the 75% voting floor, and truncating at
+ * 15 was silently starving both the curated dominance scoring and the
+ * dynamic taxonomy fallback of real signal.
  *
  * `result.confidence` is the TOP label's confidence (Rekognition returns a
  * confidence per label, not one overall score) — this is what
@@ -109,10 +158,11 @@ class RekognitionClassificationProvider implements ClassificationProvider {
   }
 
   async classify(imageBuffer: Buffer): Promise<ClassificationResult> {
+    const prepared = await prepareForRekognition(imageBuffer);
     const res = await this.client.send(
       new DetectLabelsCommand({
-        Image: { Bytes: imageBuffer },
-        MaxLabels: 15,
+        Image: { Bytes: prepared },
+        MaxLabels: 30,
         MinConfidence: 50,
       }),
     );
@@ -174,4 +224,34 @@ const provider: ClassificationProvider =
 
 export async function classify(imageBuffer: Buffer): Promise<ClassificationResult> {
   return provider.classify(imageBuffer);
+}
+
+/**
+ * Validates a Photo.aiDetection JSON blob (Prisma's JsonValue) back into a
+ * ClassificationResult. Deliberately strict about the two load-bearing
+ * fields (labels must be a string array, confidence a number) and lenient
+ * about the optional parallel arrays — a malformed/legacy blob (or a photo
+ * classified before this column existed) simply misses the cache rather
+ * than crashing a job or an API request. Shared by the worker's reclassify
+ * cache-hit path and by lib/photoCard.ts's per-label confidence exposure
+ * (2026-07-11, Abhishek's request to see each label's own confidence in the
+ * network response).
+ */
+export function parseCachedDetection(value: unknown): ClassificationResult | null {
+  if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const blob = value as Record<string, unknown>;
+  if (!Array.isArray(blob.labels) || !blob.labels.every((l) => typeof l === "string")) return null;
+  if (typeof blob.confidence !== "number") return null;
+  return {
+    labels: blob.labels,
+    confidence: blob.confidence,
+    labelConfidences: Array.isArray(blob.labelConfidences)
+      ? (blob.labelConfidences as number[])
+      : undefined,
+    labelTaxonomies: Array.isArray(blob.labelTaxonomies)
+      ? (blob.labelTaxonomies as string[][])
+      : undefined,
+  };
 }

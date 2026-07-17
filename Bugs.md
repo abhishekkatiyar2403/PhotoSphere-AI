@@ -296,6 +296,50 @@ This was three separate things.
 
 ---
 
+## #16 — A street photo with a tiny incidental person landed in "Person 1"
+
+**Reported:** 2026-07-10
+**Abhishek's report:** *"why this photo comes in people"* (a Marine Drive street scene — palm trees, buildings, lamp posts — filed into the "Person 1" face folder)
+
+**The bug:** Rekognition tags one detected face with a whole cluster of near-synonymous labels (Face, Head, Portrait, Person, Adult, Male, Man) — six-plus People votes from ONE incidental passer-by, out-scoring the photo's actual subject (Building, Office Building, High Rise, ...) in #15's dominance scoring. Label counting fundamentally can't distinguish "a portrait" from "a person happens to be in frame" — but face geometry can.
+
+**Fix logic:** The face refinement step already calls DetectFaces, which returns each face's bounding box — so use the face's SIZE. A face covering less than ~1.5% of the image area is an incidental passer-by, not the subject. In that case the photo isn't a People photo at all: reject the People verdict entirely and re-rank the photo's OTHER matched categories (new `rankCategories()` export returns the full scored list, not just the winner) so it lands where its remaining labels point (Architecture, for this photo).
+
+**Fix delivered:** `MIN_FACE_AREA_RATIO` prominence gate in `backend/src/lib/classification/faces.ts` (returns null = "reject People"); worker falls through the category ranking on rejection; missing Architecture vocabulary added (office building, high rise, apartment building, condo, city, urban, skyscraper). Verified by reclassifying the exact reported photo: "Person 1" → "Architecture".
+**Status:** Fixed, verified against the reported photo. Shipped in `0f9a732`.
+
+---
+
+## #17 — Phones, laptops, and headphones all dumped in Uncategorized
+
+**Reported:** 2026-07-10
+**Abhishek's report:** *"why these photos are in uncategorized did amazon api not recognize what these photos are and create a category and add these photos in that folder if category is not availabe also add that category when new catgory came"* (screenshot: 6 electronics product photos, all labeled perfectly by Rekognition at 1.00 — Electronics, Iphone, Laptop, Headphones — all in Uncategorized)
+
+**The bug:** Rekognition recognized everything; OUR curated label→category table simply had no Electronics vocabulary, so rich correct labels matched nothing and fell through. More fundamentally: any photo whose subject wasn't in our hand-written table was doomed to Uncategorized, forever, no matter how well the AI understood it.
+
+**Fix logic (two layers):**
+1. **Electronics as a first-class curated category** with full vocabulary (phone, iphone, laptop, camera, headphones, monitor, ...).
+2. **Dynamic category creation** — exactly what Abhishek asked for: Rekognition's DetectLabels response tags every label with its own ~40-entry top-level taxonomy ("Iphone" → "Technology and Computing"), which we had been throwing away at the provider boundary. Now passed through (`labelTaxonomies` on ClassificationResult); when no curated category matches, the dominant taxonomy category names the folder — mapped to friendly short names (`TAXONOMY_TO_CATEGORY`) where known, used verbatim otherwise — and `findOrCreateFolder` auto-creates it. A brand-new KIND of photo now mints a brand-new category instead of dying in Uncategorized. (Noise taxonomies like "Colors and Visual Compositions" are excluded from ever naming a folder.)
+
+**Fix delivered:** `backend/src/lib/classification/index.ts` (taxonomy pass-through), `categoryMapping.ts` (Electronics vocab + taxonomy fallback in `rankCategories`), "Electronics" added to both search-category lists. Verified: all 6 reported photos → Electronics on reclassify; dynamic fallback observed live minting "Tools" and "Weapons and Military" folders for photos with no curated match.
+**Status:** Fixed, verified live. Shipped in `0f9a732`.
+
+---
+
+## #18 — Utensils and furniture lumped into one folder
+
+**Reported:** 2026-07-10
+**Abhishek's report:** *"i have tested the application and find out that it put utensils and furniture in one folder fix this issue... so that this would never happen again"*
+
+**The bug:** #17's new taxonomy fallback mapped THREE different Rekognition taxonomy branches — "furniture and furnishings", "kitchen and dining", AND "home and indoors" — to one shared "Home" folder. Couches and cutlery, same bucket. A granularity mistake in the mapping table, not a detection failure (labels were perfect: Furniture/Chair/Couch vs Cutlery/Spoon/Cookware).
+
+**Fix logic:** Two layers again. (1) **Kitchen** and **Furniture** become first-class curated categories with full vocabulary, so these object families never even reach the fallback. (2) A standing **granularity rule** documented in the taxonomy map itself: one taxonomy branch = one folder, never merged — the coarse-shared-bucket pattern is exactly how unrelated object families end up mixed, so it's now structurally forbidden for future mappings.
+
+**Fix delivered:** `categoryMapping.ts` (Kitchen + Furniture vocab, taxonomy map split, granularity rule comment), both search-category lists updated. Verified against all 6 misfiled photos' exact stored label sets, then live-reclassified: cookware + cutlery → Kitchen, armchair/coffee table/bench/couch → Furniture, "Home" folder emptied.
+**Status:** Fixed, verified live via reclassify of every affected photo.
+
+---
+
 ## Log format for future entries
 
 Each new entry follows this shape:

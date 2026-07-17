@@ -58,8 +58,16 @@ export function hammingDistance(hashA: string, hashB: string): number {
   return distance;
 }
 
-// Roadmap §13 step 3: "hamming distance < 10" threshold for duplicate detection.
-export const DUPLICATE_HAMMING_THRESHOLD = 10;
+// Near-duplicate radius on the 64-bit dHash. Roadmap §13 step 3 originally
+// said "hamming distance < 10", but 9-of-64 tolerated bits (14%) is loose by
+// perceptual-hashing standards and — critically — a dedup false-positive
+// here is a PERMANENT classification miss (a photo flagged duplicate is
+// never classified, worker hard gate). Lowered to 6 (2026-07-12 accuracy
+// audit): genuine re-exports/recompressions/minor-crops of the same photo
+// cluster at distance 0-4, so <6 still catches all of them, while burst-
+// sequence frames, similar-but-different sunsets, and same-wall document
+// shots — the real photos the old radius was swallowing — sit outside it.
+export const DUPLICATE_HAMMING_THRESHOLD = 6;
 
 // What every flat/solid-color image hashes to under this dHash (no
 // left-right pixel differences anywhere in the grid -> all-zero bits),
@@ -67,3 +75,27 @@ export const DUPLICATE_HAMMING_THRESHOLD = 10;
 // SKIPPED whenever either side equals this value (specs/ai-classification.md
 // §5) — flat images only ever dedup via the SHA-256 exact-byte pass.
 export const DEGENERATE_PHASH = "0000000000000000";
+
+/**
+ * Generalizes the DEGENERATE_PHASH guard to NEAR-flat images (2026-07-12
+ * accuracy audit): a hash with almost no set bits (or almost all set bits —
+ * the symmetric case) means the image had nearly zero left-right gradient
+ * structure — skies, sunsets, plain walls, fog. Two DIFFERENT such photos
+ * trivially land within any reasonable Hamming radius of each other because
+ * there's barely any signal in the hash to differ on, so near-dup
+ * comparisons are skipped for them entirely (same rule as the exact
+ * degenerate hash: low-texture images only ever dedup via the SHA-256
+ * exact-byte pass). 8 of 64 bits = 12.5% structure minimum.
+ */
+export function isLowEntropyPHash(hash: string): boolean {
+  let setBits = 0;
+  for (let i = 0; i < hash.length; i++) {
+    let nibble = parseInt(hash[i], 16);
+    while (nibble > 0) {
+      setBits += nibble & 1;
+      nibble >>= 1;
+    }
+  }
+  const totalBits = hash.length * 4;
+  return setBits < 8 || setBits > totalBits - 8;
+}

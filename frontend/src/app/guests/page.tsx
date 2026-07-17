@@ -24,6 +24,7 @@ import {
   guestsApi,
   PermissionLevel,
 } from "@/lib/api";
+import UiV2Banner from "@/components/UiV2Banner";
 
 const PERMISSION_LEVELS: PermissionLevel[] = ["view", "download", "download_all"];
 
@@ -287,6 +288,7 @@ export default function GuestsPage() {
           — Guests
         </h1>
         <div className="dashboard-topbar-right">
+          <UiV2Banner href="/share/v2" />
           <Link href="/upload" className="dashboard-guests-link" data-testid="guests-upload-link">
             Upload
           </Link>

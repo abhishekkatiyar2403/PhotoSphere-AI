@@ -16,6 +16,8 @@
  * active — there's nothing to expose once mail is actually being sent.
  */
 
+import { logger } from "../logger";
+
 export interface OwnerOtpMessage {
   ownerEmail: string;
   ownerName: string;
@@ -24,8 +26,26 @@ export interface OwnerOtpMessage {
   requestId: string;
 }
 
+// 2026-07-13 backend audit #9: the guest never used to get emailed their own
+// invite link — the owner had to copy/share it manually. keyEmail is what
+// the mock keys its in-memory delivery record by (so multiple invites to the
+// same guest email are each individually inspectable in tests).
+export interface GuestInviteMessage {
+  guestEmail: string;
+  ownerName: string;
+  inviteUrl: string;
+}
+
+// 2026-07-13 backend audit #8: password reset.
+export interface PasswordResetMessage {
+  toEmail: string;
+  resetUrl: string;
+}
+
 export interface NotificationProvider {
   sendOwnerOtp(message: OwnerOtpMessage): Promise<void>;
+  sendGuestInvite(message: GuestInviteMessage): Promise<void>;
+  sendPasswordReset(message: PasswordResetMessage): Promise<void>;
 }
 
 // Only ever expose the plaintext OTP to the test-visibility surface when
@@ -44,6 +64,11 @@ interface RecordedDelivery {
 
 class MockNotificationProvider implements NotificationProvider {
   private readonly deliveries = new Map<string, RecordedDelivery>();
+  // Keyed by guestEmail / toEmail — last delivery only (a real inbox would
+  // show every send, but "the most recent link is the one that matters" is
+  // the only thing tests/dev ever need to inspect).
+  private readonly guestInviteDeliveries = new Map<string, GuestInviteMessage>();
+  private readonly passwordResetDeliveries = new Map<string, PasswordResetMessage>();
 
   async sendOwnerOtp(message: OwnerOtpMessage): Promise<void> {
     // Deliberately synchronous + in-memory. No I/O, no network. If real
@@ -58,10 +83,22 @@ class MockNotificationProvider implements NotificationProvider {
     });
 
     // Never log the plaintext code. A non-sensitive breadcrumb is fine.
-    // eslint-disable-next-line no-console
-    console.log(
-      `[notifications:mock] OTP for access request ${message.requestId} "delivered" to owner ${message.ownerEmail} (guest: ${message.guestEmail}). Plaintext withheld.`,
+    logger.info(
+      { requestId: message.requestId, ownerEmail: message.ownerEmail, guestEmail: message.guestEmail },
+      "OTP for access request 'delivered' to owner (plaintext withheld)",
     );
+  }
+
+  async sendGuestInvite(message: GuestInviteMessage): Promise<void> {
+    this.guestInviteDeliveries.set(message.guestEmail, message);
+    logger.info({ guestEmail: message.guestEmail }, "guest invite email 'delivered'");
+  }
+
+  async sendPasswordReset(message: PasswordResetMessage): Promise<void> {
+    this.passwordResetDeliveries.set(message.toEmail, message);
+    // The reset URL carries a live, single-use credential — never log it,
+    // same discipline as never logging the plaintext OTP above.
+    logger.info({ toEmail: message.toEmail }, "password reset email 'delivered' (link withheld)");
   }
 
   /** Test/dev-only: the plaintext OTP for a request, or null. Gated. */
@@ -73,6 +110,18 @@ class MockNotificationProvider implements NotificationProvider {
   /** Whether a delivery was recorded for this request (safe in any mode). */
   wasDelivered(requestId: string): boolean {
     return this.deliveries.has(requestId);
+  }
+
+  /** Test/dev-only: the invite URL last sent to this guest email, or null. Gated. */
+  getExposedGuestInviteUrl(guestEmail: string): string | null {
+    if (!otpExposureEnabled()) return null;
+    return this.guestInviteDeliveries.get(guestEmail)?.inviteUrl ?? null;
+  }
+
+  /** Test/dev-only: the reset URL last sent to this email, or null. Gated. */
+  getExposedPasswordResetUrl(email: string): string | null {
+    if (!otpExposureEnabled()) return null;
+    return this.passwordResetDeliveries.get(email)?.resetUrl ?? null;
   }
 }
 
@@ -93,26 +142,52 @@ class ResendNotificationProvider implements NotificationProvider {
     this.fromEmail = fromEmail;
   }
 
-  async sendOwnerOtp(message: OwnerOtpMessage): Promise<void> {
+  private async send(
+    to: string,
+    subject: string,
+    text: string,
+    logContext: Record<string, unknown>,
+  ): Promise<void> {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        from: this.fromEmail,
-        to: message.ownerEmail,
-        subject: `PhotoSphere AI — approve ${message.guestEmail}'s access request`,
-        text: `${message.guestEmail} is requesting access to folders you shared with them.\n\nApproval code: ${message.code}\n(expires in 5 minutes)\n\nEnter this code on your Guests page to approve, or ignore this email to leave the request pending until it expires.`,
-      }),
+      body: JSON.stringify({ from: this.fromEmail, to, subject, text }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      // eslint-disable-next-line no-console
-      console.error(`[notifications:resend] send failed (${res.status}) for request ${message.requestId}: ${body}`);
+      logger.error({ status: res.status, body, ...logContext }, "Resend send failed");
       throw new Error(`Resend send failed with status ${res.status}`);
     }
+  }
+
+  async sendOwnerOtp(message: OwnerOtpMessage): Promise<void> {
+    await this.send(
+      message.ownerEmail,
+      `PhotoSphere AI — approve ${message.guestEmail}'s access request`,
+      `${message.guestEmail} is requesting access to folders you shared with them.\n\nApproval code: ${message.code}\n(expires in 5 minutes)\n\nEnter this code on your Guests page to approve, or ignore this email to leave the request pending until it expires.`,
+      { requestId: message.requestId },
+    );
+  }
+
+  async sendGuestInvite(message: GuestInviteMessage): Promise<void> {
+    await this.send(
+      message.guestEmail,
+      `${message.ownerName} shared photos with you on PhotoSphere AI`,
+      `${message.ownerName} has shared some photo folders with you.\n\nOpen this link to request access: ${message.inviteUrl}\n\nThe owner will need to approve your request before you can view anything.`,
+      { guestEmail: message.guestEmail },
+    );
+  }
+
+  async sendPasswordReset(message: PasswordResetMessage): Promise<void> {
+    await this.send(
+      message.toEmail,
+      "Reset your PhotoSphere AI password",
+      `We received a request to reset your PhotoSphere AI password.\n\nReset it here: ${message.resetUrl}\n(this link expires in 1 hour)\n\nIf you didn't request this, you can safely ignore this email — your password won't be changed.`,
+      { toEmail: message.toEmail },
+    );
   }
 }
 
@@ -146,4 +221,24 @@ export function getExposedOtp(requestId: string): string | null {
 export function wasOtpDelivered(requestId: string): boolean {
   if (!(provider instanceof MockNotificationProvider)) return true; // Resend already threw on failure above
   return provider.wasDelivered(requestId);
+}
+
+export async function sendGuestInviteEmail(message: GuestInviteMessage): Promise<void> {
+  return provider.sendGuestInvite(message);
+}
+
+/** Test/dev-only accessor for the invite URL last sent to a guest email. */
+export function getExposedGuestInviteUrl(guestEmail: string): string | null {
+  if (!(provider instanceof MockNotificationProvider)) return null;
+  return provider.getExposedGuestInviteUrl(guestEmail);
+}
+
+export async function sendPasswordResetEmail(message: PasswordResetMessage): Promise<void> {
+  return provider.sendPasswordReset(message);
+}
+
+/** Test/dev-only accessor for the reset URL last sent to an email address. */
+export function getExposedPasswordResetUrl(email: string): string | null {
+  if (!(provider instanceof MockNotificationProvider)) return null;
+  return provider.getExposedPasswordResetUrl(email);
 }

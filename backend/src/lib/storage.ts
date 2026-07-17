@@ -11,6 +11,7 @@ import {
   UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { getSignedUrl as getCloudFrontUrl } from "@aws-sdk/cloudfront-signer";
 import type { Readable } from "node:stream";
 
 /**
@@ -35,6 +36,23 @@ import type { Readable } from "node:stream";
 const usingRealS3 = Boolean(process.env.AWS_S3_BUCKET) && !process.env.VITEST;
 
 const BUCKET = usingRealS3 ? process.env.AWS_S3_BUCKET! : process.env.MINIO_BUCKET ?? "photosphere-dev";
+
+/**
+ * CloudFront read-path (SCALABILITY_ROADMAP.md #S13) — opt-in, same
+ * "presence of the env var decides the branch" pattern as usingRealS3.
+ * Only ever applies to real S3 in production; local MinIO has no CDN in
+ * front of it and the test suite must never require these creds, so this
+ * is forced off under Vitest exactly like usingRealS3 is.
+ *
+ * CLOUDFRONT_PRIVATE_KEY holds a full PEM private key. Since env files
+ * store single-line values, it's expected to arrive with literal "\n"
+ * escapes (the standard convention for PEM-in-env-var) — decoded here once
+ * at module load rather than at every sign call.
+ */
+const usingCloudFront = Boolean(process.env.CLOUDFRONT_DOMAIN) && usingRealS3;
+const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN;
+const CLOUDFRONT_KEY_PAIR_ID = process.env.CLOUDFRONT_KEY_PAIR_ID;
+const CLOUDFRONT_PRIVATE_KEY = process.env.CLOUDFRONT_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
 const s3 = usingRealS3
   ? new S3Client({
@@ -90,8 +108,23 @@ export async function putObject(key: string, body: Buffer, contentType: string):
   );
 }
 
-/** Returns a time-limited pre-signed GET URL. Never return a raw storage path/key to a client. */
+/**
+ * Returns a time-limited signed GET URL for CLIENT display use — never a raw
+ * storage path/key. Served via CloudFront (edge-cached, no S3 egress on a
+ * cache hit) whenever CLOUDFRONT_DOMAIN is configured against real S3;
+ * otherwise falls back to a direct S3/MinIO presigned URL exactly as before.
+ * Callers never need to know which one they got — same key in, same shape
+ * of short-lived URL out.
+ */
 export async function getPresignedGetUrl(key: string, expiresInSeconds = 60): Promise<string> {
+  if (usingCloudFront) {
+    return getCloudFrontUrl({
+      url: `https://${CLOUDFRONT_DOMAIN}/${key}`,
+      keyPairId: CLOUDFRONT_KEY_PAIR_ID!,
+      privateKey: CLOUDFRONT_PRIVATE_KEY!,
+      dateLessThan: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+    });
+  }
   const command = new GetObjectCommand({ Bucket: BUCKET, Key: key });
   return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
 }

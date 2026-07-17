@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { getPresignedGetUrl } from "./storage";
 import { thumbnailKey } from "./storageKeys";
 import { rankCategories, CONFIDENCE_THRESHOLD, UNCATEGORIZED } from "./classification/categoryMapping";
+import { parseCachedDetection } from "./classification";
 
 /**
  * Shared select + shape for a "list photos as cards" response. Used by
@@ -29,6 +30,11 @@ export const PHOTO_CARD_SELECT = {
   aiClassificationStatus: true,
   aiLabels: true,
   aiConfidence: true,
+  // Cached raw provider detection (labels + PER-LABEL confidence +
+  // taxonomies) — surfaced to the client as `aiLabelConfidences` below, so
+  // network-inspecting the response shows exactly what Rekognition returned
+  // for each individual label, not just the one overall aiConfidence.
+  aiDetection: true,
   s3ThumbnailKey: true,
   duplicateOfPhotoId: true,
   dedupMethod: true,
@@ -118,6 +124,26 @@ export function computeReason(
   return null;
 }
 
+/**
+ * Per-label confidence pairs (Abhishek's request, 2026-07-11: "see
+ * confidence score of each label in the network trace response for every
+ * photo"). Reads the photo's cached raw detection (Photo.aiDetection —
+ * populated on every live classify since the detection-caching feature);
+ * falls back to null per label when no cache exists yet (pre-cache photos,
+ * or the mock provider, which never populates aiDetection) rather than
+ * fabricating a number — a null confidence in the response means "not
+ * available for this label," not "zero."
+ */
+export function labelConfidences(
+  photo: Pick<PhotoCardRow, "aiLabels" | "aiDetection">,
+): { label: string; confidence: number | null }[] {
+  const cached = parseCachedDetection(photo.aiDetection);
+  return photo.aiLabels.map((label, i) => ({
+    label,
+    confidence: cached?.labelConfidences?.[i] ?? null,
+  }));
+}
+
 export async function toPhotoCard(photo: PhotoCardRow) {
   const isDuplicate = photo.aiClassificationStatus === "duplicate";
   return {
@@ -126,6 +152,9 @@ export async function toPhotoCard(photo: PhotoCardRow) {
     status: photo.aiClassificationStatus,
     aiLabels: photo.aiLabels,
     aiConfidence: photo.aiConfidence,
+    // Per-label confidence (see labelConfidences doc comment) — parallel to
+    // aiLabels, e.g. [{ label: "Shark", confidence: 0.55 }, ...].
+    aiLabelConfidences: labelConfidences(photo),
     // Additive fields (organize UI, design/wireframes/reclassify-ui.svg):
     // the "duplicate of X (method)" label needs both. Only meaningful when
     // status is duplicate; null otherwise, same null-vs-error convention as

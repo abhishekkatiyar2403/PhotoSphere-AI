@@ -32,6 +32,7 @@ import {
   searchApi,
 } from "@/lib/api";
 import { PhotoViewer, ViewerPhotoRef } from "@/components/PhotoViewer";
+import UiV2Banner from "@/components/UiV2Banner";
 
 const PAGE_LIMIT = 12;
 
@@ -237,6 +238,7 @@ export default function SearchPage() {
           — Search
         </h1>
         <div className="dashboard-topbar-right">
+          <UiV2Banner href="/search/v2" />
           <Link href="/upload" className="dashboard-guests-link" data-testid="search-upload-link">
             Upload
           </Link>

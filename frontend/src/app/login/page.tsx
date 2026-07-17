@@ -75,6 +75,9 @@ export default function LoginPage() {
         <p className="auth-footer">
           Don&apos;t have an account? <Link href="/signup">Sign up</Link>
         </p>
+        <p className="auth-footer">
+          <Link href="/login/v2">Try the new look ✨</Link>
+        </p>
       </div>
     </AuthLayout>
   );

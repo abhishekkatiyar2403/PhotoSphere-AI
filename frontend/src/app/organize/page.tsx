@@ -59,6 +59,7 @@ import {
   unfiledPhotosApi,
 } from "@/lib/api";
 import { PhotoViewer, ViewerPhotoRef } from "@/components/PhotoViewer";
+import UiV2Banner from "@/components/UiV2Banner";
 
 const PAGE_LIMIT = 12;
 const POLL_INTERVAL_MS = 2000;
@@ -1142,6 +1143,7 @@ export default function OrganizePage() {
           — Organize
         </h1>
         <div className="dashboard-topbar-right">
+          <UiV2Banner href="/organize/v2" />
           <Link href="/upload" className="dashboard-guests-link" data-testid="organize-upload-link">
             Upload
           </Link>

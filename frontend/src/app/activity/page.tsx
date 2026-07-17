@@ -27,6 +27,7 @@ import {
   AuditEntry,
   authApi,
 } from "@/lib/api";
+import UiV2Banner from "@/components/UiV2Banner";
 
 const PAGE_SIZE = 25;
 
@@ -258,6 +259,7 @@ export default function ActivityPage() {
           — Activity
         </h1>
         <div className="dashboard-topbar-right">
+          <UiV2Banner href="/activity/v2" />
           <Link href="/upload" className="dashboard-guests-link" data-testid="activity-upload-link">
             Upload
           </Link>

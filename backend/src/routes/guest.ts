@@ -9,11 +9,8 @@ import { prisma } from "../lib/prisma";
 import { getPresignedDownloadUrl, getPresignedGetUrl } from "../lib/storage";
 import { thumbnailKey } from "../lib/storageKeys";
 import { downloadManyPhotosSchema, folderPhotosQuerySchema } from "../lib/validation";
-import {
-  getFolderPermissionLevel,
-  getPermittedFolderIds,
-  requireGuest,
-} from "../middleware/requireGuest";
+import { getFolderPermissionLevel, getPermittedFolderIds, requireGuest } from "../middleware/requireGuest";
+import { guestRateLimiter } from "../middleware/guestRateLimiter";
 
 /**
  * Scoped guest portal (specs/guest-access-otp.md §5). requireGuest on every
@@ -32,6 +29,7 @@ const THUMBNAIL_SIZES = [150, 400, 1200] as const;
 router.get(
   "/folders",
   requireGuest,
+  guestRateLimiter,
   asyncHandler(async (req, res) => {
     const guestUserId = req.guest!.guestUserId;
     const permittedIds = await getPermittedFolderIds(guestUserId);
@@ -66,6 +64,7 @@ router.get(
 router.get(
   "/folders/:id/photos",
   requireGuest,
+  guestRateLimiter,
   asyncHandler(async (req, res) => {
     let query;
     try {
@@ -119,6 +118,7 @@ router.get(
 router.get(
   "/photos/:id",
   requireGuest,
+  guestRateLimiter,
   asyncHandler(async (req, res) => {
     const photo = await prisma.photo.findUnique({
       where: { id: req.params.id },
@@ -193,6 +193,7 @@ router.get(
 router.get(
   "/photos/:id/download",
   requireGuest,
+  guestRateLimiter,
   asyncHandler(async (req, res) => {
     const photo = await prisma.photo.findUnique({
       where: { id: req.params.id },
@@ -254,6 +255,7 @@ router.get(
 router.post(
   "/photos/download-many",
   requireGuest,
+  guestRateLimiter,
   asyncHandler(async (req, res) => {
     let input;
     try {
@@ -329,6 +331,7 @@ router.post(
 router.get(
   "/folders/:id/download-all",
   requireGuest,
+  guestRateLimiter,
   asyncHandler(async (req, res) => {
     const guestUserId = req.guest!.guestUserId;
 

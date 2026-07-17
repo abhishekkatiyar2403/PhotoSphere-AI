@@ -27,7 +27,12 @@ import { DEGENERATE_PHASH, hammingDistance, DUPLICATE_HAMMING_THRESHOLD } from "
 const PHASH = {
   repro: "a5a5a5a5a5a5a5a5",
   strictlyOlder: "0f0f0f0f0f0f0f0f",
-  dupExclusion: "ffffffffffffffff",
+  // Was "ffffffffffffffff" — all-ones is inverse-flat, which the 2026-07-12
+  // low-entropy pHash guard (isLowEntropyPHash) now correctly skips from
+  // near-dup matching entirely. This test's subject is the
+  // duplicateOfPhotoId:null exclusion invariant, not entropy, so it just
+  // needs a distinct STRUCTURED hash.
+  dupExclusion: "f0f0f0f0f0f0f0f0",
   tiebreak: "3333333333333333",
   scoping: "cccccccccccccccc",
 } as const;

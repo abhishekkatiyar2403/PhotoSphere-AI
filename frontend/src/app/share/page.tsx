@@ -27,6 +27,7 @@ import {
   guestsApi,
   PermissionLevel,
 } from "@/lib/api";
+import UiV2Banner from "@/components/UiV2Banner";
 
 function isAuthError(err: unknown): boolean {
   return err instanceof ApiError && err.status === 401;
@@ -180,6 +181,7 @@ export default function SharePage() {
           — Share
         </h1>
         <div className="dashboard-topbar-right">
+          <UiV2Banner href="/share/v2" />
           <Link href="/upload" className="dashboard-guests-link" data-testid="share-upload-link">
             Upload
           </Link>

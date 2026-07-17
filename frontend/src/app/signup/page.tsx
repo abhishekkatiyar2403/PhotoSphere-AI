@@ -88,6 +88,9 @@ export default function SignupPage() {
         <p className="auth-footer">
           Already have an account? <Link href="/login">Log in</Link>
         </p>
+        <p className="auth-footer">
+          <Link href="/signup/v2">Try the new look ✨</Link>
+        </p>
       </div>
     </AuthLayout>
   );
