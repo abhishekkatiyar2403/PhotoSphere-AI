@@ -164,10 +164,13 @@ export async function toPhotoCard(photo: PhotoCardRow) {
     // Explains why a card is sitting in Unfiled or "Uncategorized" instead
     // of a normal category folder — null for a normally-filed photo.
     reason: computeReason(photo),
-    // 150px thumbnail as a pre-signed 60s-TTL URL; null if the worker
-    // hasn't generated thumbnails yet. Never a raw storage key.
+    // 400px "default" thumbnail as a pre-signed 60s-TTL URL; null if the
+    // worker hasn't generated thumbnails yet. Never a raw storage key.
+    // 400 (not 150): grid cards render 300-500px wide, and upscaling the
+    // 150px thumb is visibly blurry — 150 stays available for genuinely
+    // tiny surfaces via the photo-detail endpoint's thumbnails map.
     thumbnailUrl: photo.s3ThumbnailKey
-      ? await getPresignedGetUrl(thumbnailKey(photo.ownerId, photo.id, 150), 60)
+      ? await getPresignedGetUrl(thumbnailKey(photo.ownerId, photo.id, 400), 60)
       : null,
   };
 }
