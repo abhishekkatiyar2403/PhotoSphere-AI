@@ -123,13 +123,28 @@ export function createApp() {
   // browsers omit Origin on same-origin GETs but always send it cross-site on
   // state-changing requests) against the SAME allow-list already used for CORS
   // is the standard lightweight equivalent. GETs are exempt (no state change).
+  //
+  // The comparison is EXACT origin membership, never a prefix test: a prefix
+  // match (origin.startsWith(allowed)) would accept an attacker-registered
+  // `https://app.example.com.evil.com` against an allowed `https://app.example.com`.
+  // The raw header is normalized to its scheme://host[:port] origin first so
+  // both an Origin header (already an origin) and a Referer (a full URL with a
+  // path) compare correctly against the allow-list.
   if (process.env.NODE_ENV === "production") {
     app.use((req, res, next) => {
       if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
         return next();
       }
-      const origin = req.headers.origin ?? req.headers.referer;
-      if (!origin || !allowedOrigins.some((allowed) => origin.startsWith(allowed))) {
+      const raw = req.headers.origin ?? req.headers.referer;
+      let requestOrigin: string | null = null;
+      if (raw) {
+        try {
+          requestOrigin = new URL(raw).origin; // scheme://host[:port], no path
+        } catch {
+          requestOrigin = null; // malformed header → reject below
+        }
+      }
+      if (!requestOrigin || !allowedOrigins.includes(requestOrigin)) {
         return res.status(403).json({ error: "Forbidden — invalid or missing Origin" });
       }
       next();
