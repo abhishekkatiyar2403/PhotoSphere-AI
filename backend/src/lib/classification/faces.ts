@@ -232,15 +232,38 @@ class RekognitionFaceProvider implements FaceRefinementProvider {
       // collection FaceId — person→folder resolution is the worker's job.
       const collectionId = await this.ensureCollection(ownerId);
 
-      const search = await this.client.send(
-        new SearchFacesByImageCommand({
-          CollectionId: collectionId,
-          Image: { Bytes: prepared },
-          FaceMatchThreshold: FACE_MATCH_THRESHOLD,
-          MaxFaces: 1,
-        }),
-      );
-      const matchedFaceId = search.FaceMatches?.[0]?.Face?.FaceId;
+      // QualityFilter AUTO (2026-07-18 parameter pass): SearchFacesByImage's
+      // DEFAULT quality filter is NONE — unlike IndexFaces below, whose AUTO
+      // bar this codebase already relies on ("too blurry to ever match
+      // against later — don't enroll"). Without it, a query face too
+      // low-quality to ENROLL could still be MATCHED against the registry,
+      // and low-quality query faces are exactly where spurious ≥85-similarity
+      // matches come from (AWS's own guidance is to quality-filter searches)
+      // — a wrong match files the photo into the WRONG person's folder, the
+      // one invisible failure mode in this feature. Filtering the query face
+      // can't fragment anyone (no new Person is minted on the fallback path);
+      // the photo just stays in flat "People", the same terminal state the
+      // IndexFaces AUTO rejection below would have produced anyway. When the
+      // filter rejects every face, Rekognition signals it as
+      // InvalidParameterException ("no faces detected") — an expected
+      // outcome here, not an error, so it's handled locally as a quiet
+      // fallback instead of tripping the outer catch's error log.
+      let matchedFaceId: string | undefined;
+      try {
+        const search = await this.client.send(
+          new SearchFacesByImageCommand({
+            CollectionId: collectionId,
+            Image: { Bytes: prepared },
+            FaceMatchThreshold: FACE_MATCH_THRESHOLD,
+            MaxFaces: 1,
+            QualityFilter: "AUTO",
+          }),
+        );
+        matchedFaceId = search.FaceMatches?.[0]?.Face?.FaceId;
+      } catch (err) {
+        if ((err as { name?: string }).name !== "InvalidParameterException") throw err;
+        return { kind: "fallback" };
+      }
       if (matchedFaceId) {
         return { kind: "person", faceId: matchedFaceId };
       }

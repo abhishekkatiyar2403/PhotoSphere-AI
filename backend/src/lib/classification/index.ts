@@ -138,11 +138,17 @@ class MockClassificationProvider implements ClassificationProvider {
  * same whether storage is local MinIO or real S3) and asks for up to 30
  * labels at >=50% confidence, letting categoryMapping.ts's own
  * CONFIDENCE_THRESHOLD (60%) do the real "is this good enough" gating.
- * MaxLabels raised from 15 to 30 (2026-07-12 parameter audit): Rekognition
- * bills per IMAGE, not per label, so this is free extra evidence — a rich
- * scene can carry 20+ labels above the 75% voting floor, and truncating at
- * 15 was silently starving both the curated dominance scoring and the
- * dynamic taxonomy fallback of real signal.
+ * MaxLabels raised 15 → 30 (2026-07-12 parameter audit) → 100 (2026-07-18):
+ * Rekognition bills per IMAGE, not per label, so this is free extra
+ * evidence — and although labels come back sorted by confidence descending
+ * (so a cap sheds the weakest labels first), a genuinely busy scene can
+ * carry MORE than 30 labels above categoryMapping's 75% voting floor, at
+ * which point a 30-label cap silently starves the curated dominance scoring
+ * and the dynamic taxonomy fallback of real, above-the-floor signal. 100
+ * removes truncation as a factor entirely; MinConfidence stays at 50 (NOT
+ * raised to match the 75% floor) on purpose — the 50-75% tail never votes,
+ * but it IS surfaced per-label on photo cards (Abhishek's 2026-07-11
+ * request) and must keep flowing through.
  *
  * `result.confidence` is the TOP label's confidence (Rekognition returns a
  * confidence per label, not one overall score) — this is what
@@ -162,7 +168,7 @@ class RekognitionClassificationProvider implements ClassificationProvider {
     const res = await this.client.send(
       new DetectLabelsCommand({
         Image: { Bytes: prepared },
-        MaxLabels: 30,
+        MaxLabels: 100,
         MinConfidence: 50,
       }),
     );
