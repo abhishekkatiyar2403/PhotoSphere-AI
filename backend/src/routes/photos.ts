@@ -283,7 +283,7 @@ router.get(
       return res.status(404).json({ error: "Photo not found" });
     }
 
-    const originalUrl = await getPresignedGetUrl(photo.s3Key, 60);
+    const originalUrl = await getPresignedGetUrl(photo.s3Key, 3600);
     // Separate from `original.url` above — that one is used to DISPLAY the
     // photo (lightbox/viewer), so it must never carry a forced-download
     // disposition. This one is only ever used by the "Download" button.
@@ -296,7 +296,7 @@ router.get(
       for (const size of THUMBNAIL_SIZES) {
         const key = thumbnailKey(photo.ownerId, photo.id, size);
         try {
-          thumbnails[String(size)] = await getPresignedGetUrl(key, 60);
+          thumbnails[String(size)] = await getPresignedGetUrl(key, 3600);
         } catch {
           // Object doesn't exist yet for this size - omit rather than error.
         }

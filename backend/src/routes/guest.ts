@@ -140,14 +140,14 @@ router.get(
       return res.status(404).json({ error: "Photo not found" });
     }
 
-    const originalUrl = await getPresignedGetUrl(photo.s3Key, 60);
+    const originalUrl = await getPresignedGetUrl(photo.s3Key, 3600);
 
     const thumbnails: Record<string, string> = {};
     if (photo.s3ThumbnailKey) {
       for (const size of THUMBNAIL_SIZES) {
         const key = thumbnailKey(photo.ownerId, photo.id, size);
         try {
-          thumbnails[String(size)] = await getPresignedGetUrl(key, 60);
+          thumbnails[String(size)] = await getPresignedGetUrl(key, 3600);
         } catch {
           // Object doesn't exist yet for this size — omit rather than error.
         }
