@@ -8,8 +8,17 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // DATABASE_URL points at Supabase's transaction-mode PgBouncer pooler
+  // (port 6543, ?pgbouncer=true) so a fleet of API/worker instances can
+  // share a much larger connection budget than the 15-connection cap on
+  // the session-mode pooler (SCALABILITY_ROADMAP.md #S10). `migrate deploy`
+  // needs a real session (advisory locks, DDL) that PgBouncer's transaction
+  // mode can't provide, so it goes over DIRECT_URL instead — Supabase's
+  // direct/session connection (port 5432), used only at deploy time by
+  // scripts/start.js, never by the running app.
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // specs/plan-tiered-upload.md PTU1 (RESOLVED, Abhishek 2026-07-13): promoted
