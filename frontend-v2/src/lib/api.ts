@@ -1,4 +1,9 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+// Exported so pages that need a real-time EventSource connection (the
+// Share page's pending-request stream, the guest portal's permission/revoke
+// stream) can build the URL themselves — EventSource has no fetch-wrapper
+// equivalent to apiFetch, so those call sites construct the URL directly.
+export { API_BASE_URL };
 
 export class ApiError extends Error {
   status: number;
@@ -533,6 +538,14 @@ export const guestsApi = {
   // everything).
   removeFolder: (guestId: string, folderId: string): Promise<{ ok: true }> =>
     apiFetch(`/api/guests/${guestId}/folders/${folderId}`, { method: "DELETE" }),
+  // Actually emails the invite link to guest.email (the address entered at
+  // creation) — the backend never persists the raw token, so inviteUrl must
+  // be the one from this guest's create() response. Only callable while
+  // that response is still in memory (see freshLink in the Share page) —
+  // there is no way to resend to a guest loaded from list(), which never
+  // includes inviteUrl.
+  sendInvite: (guestId: string, inviteUrl: string): Promise<{ sent: true }> =>
+    apiFetch(`/api/guests/${guestId}/send-invite`, { method: "POST", body: JSON.stringify({ inviteUrl }) }),
 };
 
 // Owner: the OTP-approval queue (GET/POST /api/access-requests).

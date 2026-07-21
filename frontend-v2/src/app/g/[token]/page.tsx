@@ -16,15 +16,23 @@
 //    POST /api/invites/:token/request. HARD PRIVACY CONSTRAINT: the locked
 //    grid is 100% decorative - never a real thumbnail or pre-signed URL; no
 //    guest.* API call of any kind happens before a session exists.
-//  - waiting: poll GET /api/invites/requests/:requestId/status every 5s
-//    (well under the 120/15min/IP budget); the approved status response is
-//    what sets the httpOnly guest-session cookie.
-//  - unlocked: fetch the REAL scoped data via guestPortalApi.
+//  - waiting: SSE connection to GET /api/invites/requests/:requestId/stream
+//    (server pushes the instant the owner approves/denies, or the OTP
+//    expires/auto-denies — see routes/accessRequests.ts's publishEvent
+//    calls) — no polling. The approved status response (fetched on every
+//    push, via the same GET /status call as before) is what sets the
+//    httpOnly guest-session cookie.
+//  - unlocked: fetch the REAL scoped data via guestPortalApi, then keep an
+//    SSE connection to GET /api/guest/stream open so an owner's live
+//    permission change/revoke shows up without the guest ever refreshing —
+//    also no polling. See lib/sse.ts for why this is built on Redis pub/sub
+//    (correct at N horizontally-scaled API instances, not just single-box).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   ApiError,
+  API_BASE_URL,
   downloadAllApi,
   GuestFolder,
   FolderPhoto,
@@ -34,11 +42,10 @@ import {
 } from "@/lib/api";
 import { Ps2Logo } from "@/components/v2/Ps2Logo";
 
-const POLL_INTERVAL_MS = 5000; // safely under the 120/15min/IP status-poll budget
 const PREVIEW_TILE_COUNT = 6; // a plausible tile count - NOT derived from any fetch
 
 type PortalState = "probing" | "landing" | "waiting" | "unlocked";
-type ResolvedOutcome = "denied" | "expired" | null;
+type ResolvedOutcome = "denied" | "expired" | "revoked" | null;
 
 const PAGE_LIMIT = 12;
 
@@ -77,8 +84,6 @@ export default function GuestPortalPage() {
   const [landingError, setLandingError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   // ---- Unlocked-state data (only ever fetched once state === 'unlocked') ----
   const [folders, setFolders] = useState<GuestFolder[]>([]);
   const [foldersLoading, setFoldersLoading] = useState(false);
@@ -107,13 +112,6 @@ export default function GuestPortalPage() {
   const [bulkDownloadError, setBulkDownloadError] = useState<string | null>(null);
 
   const gridRequestIdRef = useRef(0);
-
-  function stopPolling() {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }
 
   // ---- Load-time session probe ----
   useEffect(() => {
@@ -160,31 +158,38 @@ export default function GuestPortalPage() {
     }
   }
 
-  // ---- Waiting: poll status every 5s ----
+  // ---- Waiting: check status on real-time push, not a poll ----
   const pollStatus = useCallback(async (id: string) => {
     try {
       const res = await invitesApi.status(id);
       if (res.status === "approved" || res.status === "already_approved") {
-        stopPolling();
         setState("unlocked");
         return;
       }
       if (res.status === "denied" || res.status === "expired") {
-        stopPolling();
         setResolvedOutcome(res.status);
         setState("landing");
         return;
       }
     } catch {
-      // Transient network/429 - keep polling silently.
+      // Transient network/429 - the next SSE push (or reconnect) tries again.
     }
   }, []);
 
   useEffect(() => {
     if (state !== "waiting" || !requestId) return;
-    pollStatus(requestId);
-    pollRef.current = setInterval(() => pollStatus(requestId), POLL_INTERVAL_MS);
-    return () => stopPolling();
+    const source = new EventSource(`${API_BASE_URL}/api/invites/requests/${requestId}/stream`, {
+      withCredentials: true,
+    });
+    // onopen covers both the very first connect (no push has happened yet,
+    // so check the current status directly) and every reconnect (in case an
+    // event was published while the connection was briefly down) — treating
+    // "connected" itself as "go check the authoritative state now" means no
+    // event can ever be silently missed, unlike relying on message payloads
+    // alone.
+    source.onopen = () => pollStatus(requestId);
+    source.onmessage = () => pollStatus(requestId);
+    return () => source.close();
   }, [state, requestId, pollStatus]);
 
   function handleRequestAgain() {
@@ -193,28 +198,62 @@ export default function GuestPortalPage() {
     setLandingError(null);
   }
 
-  // ---- Unlocked: fetch real scoped data ----
+  // ---- Unlocked: fetch real scoped data, then keep it live via SSE ----
+  // An open EventSource to GET /api/guest/stream replaces the old
+  // fixed-interval refetch: a permission change (view -> download) or a
+  // revoke made by the owner pushes a message the instant it happens (see
+  // routes/guests.ts's publishEvent calls), which just triggers a normal
+  // refetch of GET /folders here rather than trying to interpret each event
+  // type client-side — a fresh fetch is cheap and always exactly correct.
+  // A plain data update handles a permission change (canDownload/
+  // canDownloadAll below derive from the new folders list automatically);
+  // a 401 (owner fully revoked this guest) falls all the way back to
+  // 'landing' — the same locked preview shown before the request was ever
+  // approved — never leaving a stale unlocked view on screen.
   useEffect(() => {
     if (state !== "unlocked") return;
     let cancelled = false;
-    setFoldersLoading(true);
-    setFoldersError(null);
-    guestPortalApi
-      .folders()
-      .then((res) => {
+
+    async function refreshFolders(isFirstLoad: boolean) {
+      if (isFirstLoad) setFoldersLoading(true);
+      try {
+        const res = await guestPortalApi.folders();
         if (cancelled) return;
         setFolders(res.folders);
-        setSelectedFolderId((prev) => prev ?? res.folders[0]?.id ?? null);
-      })
-      .catch((err) => {
+        setFoldersError(null);
+        setSelectedFolderId((prev) => (prev && res.folders.some((f) => f.id === prev) ? prev : (res.folders[0]?.id ?? null)));
+      } catch (err) {
         if (cancelled) return;
-        setFoldersError(err instanceof Error ? err.message : "Failed to load your shared folders");
-      })
-      .finally(() => {
-        if (!cancelled) setFoldersLoading(false);
-      });
+        if (err instanceof ApiError && err.status === 401) {
+          // Owner revoked this guest entirely - drop back to the locked
+          // landing state, exactly like a guest who was never approved.
+          source.close();
+          setFolders([]);
+          setSelectedFolderId(null);
+          setPhotos([]);
+          setResolvedOutcome("revoked");
+          setState("landing");
+          return;
+        }
+        if (isFirstLoad) setFoldersError(err instanceof Error ? err.message : "Failed to load your shared folders");
+        // A transient error on a background refresh keeps the last-known
+        // folders on screen rather than clearing a working view.
+      } finally {
+        if (!cancelled && isFirstLoad) setFoldersLoading(false);
+      }
+    }
+
+    const source = new EventSource(`${API_BASE_URL}/api/guest/stream`, { withCredentials: true });
+    // onopen fires on the initial connect AND on every reconnect - treating
+    // "(re)connected" itself as "refetch now" means a change published
+    // during a brief disconnect is never silently missed.
+    source.onopen = () => refreshFolders(false);
+    source.onmessage = () => refreshFolders(false);
+
+    refreshFolders(true);
     return () => {
       cancelled = true;
+      source.close();
     };
   }, [state]);
 
@@ -398,7 +437,11 @@ export default function GuestPortalPage() {
                     </div>
                     {resolvedOutcome && (
                       <div style={{ fontSize: 12.5, color: "#e87f8f", marginTop: 10 }} data-testid="portal-resolved-message">
-                        {resolvedOutcome === "denied" ? "Your request was denied." : "Your request expired before it was approved."}
+                        {resolvedOutcome === "denied"
+                          ? "Your request was denied."
+                          : resolvedOutcome === "revoked"
+                            ? "The owner has revoked your access to these photos."
+                            : "Your request expired before it was approved."}
                       </div>
                     )}
                     {landingError && <div style={{ fontSize: 12.5, color: "#e87f8f", marginTop: 10 }}>{landingError}</div>}

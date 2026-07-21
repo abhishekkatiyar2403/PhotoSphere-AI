@@ -7,7 +7,7 @@ import { authApi, dashboardApi } from "@/lib/api";
 import { Ps2UserContext, type Ps2User } from "@/components/v2/Ps2UserContext";
 import { usePs2Theme } from "@/components/v2/Ps2ThemeProvider";
 import { useIsMobile } from "@/components/v2/useIsMobile";
-import { Ps2Logo } from "@/components/v2/Ps2Logo";
+import { Ps2Brand } from "@/components/v2/Ps2Brand";
 import { CommandPaletteV2 } from "@/components/v2/CommandPaletteV2";
 import { ShortcutsOverlayV2 } from "@/components/v2/ShortcutsOverlayV2";
 import { OnboardingTourV2, TOUR_STEPS } from "@/components/v2/OnboardingTourV2";
@@ -217,10 +217,7 @@ export default function AppShellV2({ children }: { children: ReactNode }) {
       <div className="ps2-shell">
         {!isMobile && (
           <aside className="ps2-sidebar">
-            <div className="ps2-sidebar-brand">
-              <Ps2Logo size={32} gradientId="ps2LogoSidebar" />
-              <div className="ps2-sidebar-brand-name">PhotoSphere</div>
-            </div>
+            <Ps2Brand variant="sidebar" gradientId="ps2LogoSidebar" />
             <nav className="ps2-nav">
               {NAV_ITEMS.map(({ key, label, classicHref, Icon: ItemIcon }) => (
                 <Link

@@ -23,6 +23,7 @@ import {
   AccessRequestItem,
   accessRequestsApi,
   ApiError,
+  API_BASE_URL,
   collectionsApi,
   CreateGuestResponse,
   Folder,
@@ -112,6 +113,8 @@ function ShareV2Inner() {
   const [freshLink, setFreshLink] = useState<(CreateGuestResponse & { email: string; permLabel: string; expiryLabel: string }) | null>(null);
   const [copied, setCopied] = useState(false);
   const [freshSent, setFreshSent] = useState(false);
+  const [freshSending, setFreshSending] = useState(false);
+  const [freshSendError, setFreshSendError] = useState<string | null>(null);
 
   const [pending, setPending] = useState<AccessRequestItem[]>([]);
   const [guests, setGuests] = useState<GuestListItem[]>([]);
@@ -178,23 +181,44 @@ function ShareV2Inner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadRoster = useCallback(async () => {
-    setRosterLoading(true);
-    setRosterError(null);
+  const loadRoster = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setRosterLoading(true);
+      setRosterError(null);
+    }
     try {
       const [pendingRes, guestsRes] = await Promise.all([accessRequestsApi.list("pending"), guestsApi.list()]);
       setPending(pendingRes.requests);
       setGuests(guestsRes.guests);
     } catch (err) {
       if (isAuthError(err)) return;
-      setRosterError(err instanceof Error ? err.message : "Failed to load guests");
+      // A silent background poll failing transiently shouldn't blank out an
+      // already-loaded, working roster with an error banner.
+      if (!opts?.silent) setRosterError(err instanceof Error ? err.message : "Failed to load guests");
     } finally {
-      setRosterLoading(false);
+      if (!opts?.silent) setRosterLoading(false);
     }
   }, []);
 
   useEffect(() => {
     loadRoster();
+  }, [loadRoster]);
+
+  // Auto-detect a new guest access request without the owner reloading the
+  // page — an SSE connection to this owner's own channel (see lib/sse.ts,
+  // routes/invites.ts's publishEvent on a fresh request) pushes the instant
+  // a guest clicks "Request access," which triggers a silent roster
+  // refetch; the approval card just appears on its own. Built on Redis
+  // pub/sub server-side, so this is correct even behind a load-balanced,
+  // multi-instance deploy — not just this one dev server.
+  useEffect(() => {
+    const source = new EventSource(`${API_BASE_URL}/api/access-requests/stream`, { withCredentials: true });
+    // onopen covers the initial connect and every reconnect (in case an
+    // event fired while briefly disconnected) - "connected" itself means
+    // "refetch now," so nothing can be silently missed between events.
+    source.onopen = () => loadRoster({ silent: true });
+    source.onmessage = () => loadRoster({ silent: true });
+    return () => source.close();
   }, [loadRoster]);
 
   function toggleFolder(id: string) {
@@ -256,11 +280,21 @@ function ShareV2Inner() {
     setTimeout(() => setCopied(false), 1800);
   }
 
-  function sendFreshLink() {
+  async function sendFreshLink() {
     if (!freshLink) return;
-    setFreshSent(true);
-    setSentMap((prev) => ({ ...prev, [freshLink.guestId]: "just now" }));
-    showToast(`Link sent to ${freshLink.email}.`);
+    setFreshSending(true);
+    setFreshSendError(null);
+    try {
+      await guestsApi.sendInvite(freshLink.guestId, freshLink.inviteUrl);
+      setFreshSent(true);
+      setSentMap((prev) => ({ ...prev, [freshLink.guestId]: "just now" }));
+      showToast(`Link sent to ${freshLink.email}.`);
+    } catch (err) {
+      if (isAuthError(err)) return;
+      setFreshSendError(err instanceof Error ? err.message : "Failed to send the invite email");
+    } finally {
+      setFreshSending(false);
+    }
   }
 
   async function handleApprove(requestId: string) {
@@ -293,10 +327,12 @@ function ShareV2Inner() {
     }
   }
 
-  function handleSend(guest: GuestListItem) {
-    setSentMap((prev) => ({ ...prev, [guest.id]: "just now" }));
-    showToast(`Link sent to ${guest.email}`);
-  }
+  // Resending an OLDER guest's invite isn't possible from here: the backend
+  // never persists the raw invite link (only its hash), so once you leave
+  // this page after generating it, there is nothing left to email. The
+  // button below is disabled with an explanatory tooltip for that case
+  // rather than faking a "Sent" state — see sendFreshLink for the one case
+  // (the just-generated link, still in memory) that can actually send.
 
   async function handleRevoke(guest: GuestListItem) {
     if (guest.status === "revoked" || guest.status === "expired") {
@@ -497,6 +533,7 @@ function ShareV2Inner() {
                 type="button"
                 className="sgx-sheen"
                 onClick={sendFreshLink}
+                disabled={freshSending}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -511,14 +548,18 @@ function ShareV2Inner() {
                   fontSize: 12.5,
                   fontWeight: 600,
                   fontFamily: "inherit",
-                  cursor: "pointer",
+                  cursor: freshSending ? "default" : "pointer",
+                  opacity: freshSending ? 0.7 : 1,
                   transition: "transform .2s, box-shadow .2s, background-position .8s ease",
                 }}
               >
                 <SendIcon />
-                {freshSent ? "Sent ✓" : "Send to guest"}
+                {freshSending ? "Sending…" : freshSent ? "Sent ✓" : "Send to guest"}
               </button>
             </div>
+            {freshSendError && (
+              <div style={{ fontSize: 12, color: "#e87f8f", marginTop: 4 }}>{freshSendError}</div>
+            )}
           </div>
         )}
       </div>
@@ -625,17 +666,12 @@ function ShareV2Inner() {
                     <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 99, background: statusBg, color: statusFg }}>{statusLabel}</span>
                     <span style={{ fontSize: 12, color: "var(--ps2-muted)" }}>{metaLine}</span>
                     <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-                      {!revokedLike && (
-                        <button
-                          type="button"
-                          className="sgx-send"
-                          onClick={() => handleSend(guest)}
-                          style={{ display: "flex", alignItems: "center", gap: 7, borderRadius: 9, border: "none", background: "var(--ps2-accent)", color: "#141118", padding: "8px 14px", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", transition: "transform .2s" }}
-                        >
-                          <SendIcon />
-                          {sent ? "Resend" : "Send"}
-                        </button>
-                      )}
+                      {/* No Send/Resend button here by design: the backend never
+                          stores the raw invite link after the one-time create
+                          response, so there is nothing left to (re)send once
+                          this guest is part of the roster - `metaLine` above
+                          already shows "sent ..." for guests sent via the
+                          fresh-link card. */}
                       <select
                         value={permValue}
                         onChange={(e) => handleChangePermission(guest, e.target.value as PermissionLevel)}
