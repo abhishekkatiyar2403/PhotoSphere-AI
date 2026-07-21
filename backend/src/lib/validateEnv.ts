@@ -50,6 +50,14 @@ export function validateEnv(): void {
     }
   }
 
+  // Real Gmail SMTP email (lib/notifications/index.ts's own opt-in, takes
+  // priority over Resend when both are set).
+  if (process.env.GMAIL_USER || process.env.GMAIL_APP_PASSWORD) {
+    for (const key of ["GMAIL_USER", "GMAIL_APP_PASSWORD"]) {
+      if (!process.env[key]) missing.push(key);
+    }
+  }
+
   // Real Resend email (lib/notifications/index.ts's own opt-in).
   if (process.env.RESEND_API_KEY || process.env.RESEND_FROM_EMAIL) {
     for (const key of ["RESEND_API_KEY", "RESEND_FROM_EMAIL"]) {

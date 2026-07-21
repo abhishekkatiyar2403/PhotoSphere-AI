@@ -11,6 +11,7 @@ import { thumbnailKey } from "../lib/storageKeys";
 import { downloadManyPhotosSchema, folderPhotosQuerySchema } from "../lib/validation";
 import { getFolderPermissionLevel, getPermittedFolderIds, requireGuest } from "../middleware/requireGuest";
 import { guestRateLimiter } from "../middleware/guestRateLimiter";
+import { streamChannel } from "../lib/sse";
 
 /**
  * Scoped guest portal (specs/guest-access-otp.md §5). requireGuest on every
@@ -23,6 +24,21 @@ import { guestRateLimiter } from "../middleware/guestRateLimiter";
 const router = Router();
 
 const THUMBNAIL_SIZES = [150, 400, 1200] as const;
+
+// GET /api/guest/stream — real-time push replacing the guest portal's old
+// fixed-interval "am I still allowed here" poll. Fires the instant the
+// owner changes this guest's permission level or revokes access (see the
+// publishEvent calls in routes/guests.ts) — the client re-fetches
+// GET /folders on any event rather than trying to special-case each event
+// type client-side, since a fresh fetch is cheap and always exactly correct.
+router.get(
+  "/stream",
+  requireGuest,
+  guestRateLimiter,
+  (req, res) => {
+    streamChannel(req, res, `sse:guest:${req.guest!.guestUserId}`);
+  },
+);
 
 // GET /api/guest/folders — only permitted, live (non-revoked, non-expired)
 // folders, each with name + photoCount + this guest's permission level.

@@ -17,6 +17,7 @@ import {
   inviteRequestRateLimiter,
   inviteStatusRateLimiter,
 } from "../middleware/inviteRateLimiter";
+import { publishEvent, streamChannel } from "../lib/sse";
 
 /**
  * Public (unauthenticated) invite-entry routes (specs/guest-access-otp.md §5).
@@ -120,6 +121,21 @@ router.get(
     if (!code) return res.status(404).json({ error: "Not available" });
     return res.status(200).json({ otp: code });
   }),
+);
+
+// GET /api/invites/requests/:requestId/stream — real-time push replacing
+// the guest's old fixed-interval "waiting" poll. Deliberately as
+// UNAUTHENTICATED as the /status route right above it (same security model:
+// requestId is an unguessable UUID, rate-limited the same way) — there is no
+// guest session yet at this point, that's the entire thing being waited on.
+// Fires the instant the owner approves/denies, or the OTP expires/auto-denies
+// (see routes/accessRequests.ts's publishEvent calls).
+router.get(
+  "/requests/:requestId/stream",
+  inviteStatusRateLimiter,
+  (req, res) => {
+    streamChannel(req, res, `sse:access-request:${req.params.requestId}`);
+  },
 );
 
 // POST /api/invites/:token/request — guest opens the link, requests access.
@@ -232,6 +248,10 @@ router.post(
         userAgent: deviceInfo(req).userAgent,
       },
       ipAddress: clientIp(req),
+    });
+    publishEvent(`sse:owner:${invite.guestUser.owner.id}`, {
+      type: "access_request_created",
+      requestId: ar.id,
     });
 
     return res.status(200).json({ requestId: ar.id, status: "pending" });

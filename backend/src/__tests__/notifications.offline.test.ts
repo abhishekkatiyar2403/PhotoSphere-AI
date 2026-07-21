@@ -7,13 +7,17 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { getExposedOtp, sendOwnerOtp, wasOtpDelivered } from "../lib/notifications";
 
 // Offline verification for the notification module's MOCK path — the
-// default, unconfigured behavior (no RESEND_API_KEY set) must still be 100%
-// network-free, exactly as it always was. A real Resend-backed provider was
-// added deliberately (Abhishek's explicit go-ahead, for a production deploy)
-// and activates ONLY when RESEND_API_KEY + RESEND_FROM_EMAIL are both set —
-// so this file no longer bans `fetch` from the module outright (that would
-// now be a false failure); instead it proves the MOCK class itself still
-// never touches the network, and that JWT/network SDKs are still absent.
+// default, unconfigured behavior (no RESEND_API_KEY/GMAIL_USER set) must
+// still be 100% network-free, exactly as it always was. Two real providers
+// were added deliberately (Abhishek's explicit go-ahead): a Resend-backed one
+// (plain `fetch`, no SDK) and a Gmail SMTP one (`nodemailer`, needed since
+// Gmail has no plain-HTTP send API) — Gmail sends to any recipient, unlike
+// Resend's sandbox sender which is restricted to the account owner's own
+// inbox until a real domain is verified. Both activate only when their own
+// env vars are set, so this file no longer bans `fetch`/`nodemailer` from the
+// module outright (that would now be a false failure); instead it proves the
+// MOCK class itself still never touches the network, and that JWT/other
+// unreviewed network SDKs are still absent.
 //
 // 1. Runtime: every Node network entry point reachable from userland is
 //    stubbed to THROW while the mock provider "sends" an OTP (with
@@ -68,10 +72,14 @@ describe("mock notification provider works fully offline (no network, no real de
     );
     // Still fully banned everywhere in the file: JWT libraries (never used
     // for sessions in this app) and lower-level network/SDK imports that
-    // would indicate something OTHER than the deliberate, gated Resend HTTP
-    // call is reaching for the network.
+    // would indicate something OTHER than the two deliberate, gated real
+    // providers (Resend's plain-fetch HTTP call, Gmail's nodemailer SMTP
+    // client) is reaching for the network. `node:dns` is also deliberately
+    // allowed here — GmailNotificationProvider uses dns.setDefaultResultOrder
+    // to force IPv4-first resolution (some networks route smtp.gmail.com's
+    // IPv6 address to an unreachable address), not to open its own sockets.
     const forbidden =
-      /(?:from\s+|require\()\s*["'](?:node:)?(?:http|https|net|tls|dns|dgram|undici|axios|node-fetch|twilio|@sendgrid\/[^"']+|@aws-sdk\/client-ses|resend|nodemailer|jsonwebtoken|jose)["']/;
+      /(?:from\s+|require\()\s*["'](?:node:)?(?:http|https|net|tls|dgram|undici|axios|node-fetch|twilio|@sendgrid\/[^"']+|@aws-sdk\/client-ses|resend|jsonwebtoken|jose)["']/;
     expect(source).not.toMatch(forbidden);
 
     // The MOCK class specifically (extracted by its own body) must remain

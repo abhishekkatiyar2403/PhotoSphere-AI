@@ -6,6 +6,7 @@ import { prisma } from "../lib/prisma";
 import { verifyOtp } from "../lib/otp";
 import { accessRequestsQuerySchema, approveAccessRequestSchema } from "../lib/validation";
 import { requireAuth } from "../middleware/requireAuth";
+import { publishEvent, streamChannel } from "../lib/sse";
 
 /**
  * Owner OTP-approval routes (specs/guest-access-otp.md §5). Every route:
@@ -30,6 +31,21 @@ async function findOwnedRequest(requestId: string, ownerId: string) {
   if (!ar || ar.guestUser.createdBy !== ownerId) return null;
   return ar;
 }
+
+// GET /api/access-requests/stream — real-time push (replaces the Share
+// page's old fixed-interval poll). One SSE connection per owner tab,
+// subscribed to this owner's own Redis channel; a "access_request_created"
+// event fires the moment a guest requests access (see routes/invites.ts),
+// so the approval card appears without a reload. Registered before the
+// plain GET "/" below only by convention (no actual path collision - this
+// is a literal segment, not a param).
+router.get(
+  "/stream",
+  requireAuth,
+  (req, res) => {
+    streamChannel(req, res, `sse:owner:${req.user!.id}`);
+  },
+);
 
 // GET /api/access-requests?status=pending — the owner's approval queue.
 router.get(
@@ -133,6 +149,7 @@ router.post(
         metadata: { guestEmail: ar.guestUser.email, reason: "otp_expired" },
         ipAddress: req.ip ?? null,
       });
+      publishEvent(`sse:access-request:${ar.id}`, { type: "status_changed", status: "expired" });
       return res.status(403).json({ error: "OTP expired" });
     }
 
@@ -164,6 +181,7 @@ router.post(
           metadata: { guestEmail: ar.guestUser.email, reason: "otp_attempts_exceeded" },
           ipAddress: req.ip ?? null,
         });
+        publishEvent(`sse:access-request:${ar.id}`, { type: "status_changed", status: "denied" });
         return res.status(403).json({ error: "Request denied after too many incorrect codes" });
       }
       await prisma.accessRequest.update({
@@ -206,6 +224,7 @@ router.post(
       metadata: { guestEmail: ar.guestUser.email },
       ipAddress: req.ip ?? null,
     });
+    publishEvent(`sse:access-request:${ar.id}`, { type: "status_changed", status: "approved" });
 
     return res.status(200).json({ status: "approved" });
   }),
@@ -251,6 +270,7 @@ router.post(
       metadata: { guestEmail: ar.guestUser.email, reason: "owner_denied" },
       ipAddress: req.ip ?? null,
     });
+    publishEvent(`sse:access-request:${ar.id}`, { type: "status_changed", status: "denied" });
 
     return res.status(200).json({ status: "denied" });
   }),

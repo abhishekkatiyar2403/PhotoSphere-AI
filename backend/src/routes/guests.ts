@@ -16,6 +16,7 @@ import { requireAuth } from "../middleware/requireAuth";
 import { checkGuestLimit } from "../lib/plans";
 import { sendGuestInviteEmail } from "../lib/notifications";
 import { logger } from "../lib/logger";
+import { publishEvent } from "../lib/sse";
 
 /**
  * Owner share-management routes (specs/guest-access-otp.md §5). Every route:
@@ -340,6 +341,7 @@ router.patch(
       metadata: { guestEmail: guest.email, permissionLevel: input.permissionLevel, foldersUpdated: result.count },
       ipAddress: req.ip ?? null,
     });
+    publishEvent(`sse:guest:${guest.id}`, { type: "permission_changed", permissionLevel: input.permissionLevel });
 
     return res.status(200).json({ ok: true, permissionLevel: input.permissionLevel, foldersUpdated: result.count });
   }),
@@ -438,6 +440,7 @@ router.post(
         },
         ipAddress: req.ip ?? null,
       });
+      publishEvent(`sse:guest:${guest.id}`, { type: "folders_added", folderIds: added });
     }
 
     return res.status(200).json({ ok: true, added, permissionLevel: currentLevel });
@@ -479,6 +482,7 @@ router.delete(
       metadata: { guestEmail: guest.email, folderId: req.params.folderId, folderName: folder?.name ?? null },
       ipAddress: req.ip ?? null,
     });
+    publishEvent(`sse:guest:${guest.id}`, { type: "folder_removed", folderId: req.params.folderId });
 
     return res.status(200).json({ ok: true });
   }),
@@ -528,6 +532,7 @@ router.delete(
       metadata: { guestEmail: guest.email },
       ipAddress: req.ip ?? null,
     });
+    publishEvent(`sse:guest:${guest.id}`, { type: "revoked" });
 
     return res.status(200).json({ ok: true });
   }),
