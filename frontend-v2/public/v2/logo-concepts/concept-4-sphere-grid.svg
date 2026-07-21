@@ -1,0 +1,23 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#b06bc0"/>
+      <stop offset="100%" stop-color="#7fa8e8"/>
+    </linearGradient>
+    <radialGradient id="glow4" cx="35%" cy="30%" r="65%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="clip4">
+      <circle cx="100" cy="100" r="60"/>
+    </clipPath>
+  </defs>
+  <circle cx="100" cy="100" r="60" fill="url(#g4)"/>
+  <g clip-path="url(#clip4)" stroke="#ffffff" stroke-opacity="0.35" fill="none">
+    <ellipse cx="100" cy="100" rx="60" ry="20"/>
+    <ellipse cx="100" cy="100" rx="60" ry="40"/>
+    <line x1="40" y1="100" x2="160" y2="100"/>
+    <line x1="100" y1="40" x2="100" y2="160"/>
+  </g>
+  <circle cx="100" cy="100" r="60" fill="url(#glow4)"/>
+</svg>

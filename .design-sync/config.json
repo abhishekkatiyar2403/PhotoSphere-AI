@@ -1,0 +1,15 @@
+{
+  "projectId": "32c0dbd5-27ea-42bc-b682-bdb24f7bef49",
+  "pkg": "@photosphere/frontend",
+  "globalName": "PhotoSphereDS",
+  "shape": "package",
+  "srcDir": "src",
+  "entry": "frontend-v2/.ds-entry.tsx",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": "src/app/globals.css",
+  "componentSrcMap": {
+    "Ps2Brand": "src/components/v2/Ps2Brand.tsx",
+    "Ps2Logo": "src/components/v2/Ps2Logo.tsx"
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}

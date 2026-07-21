@@ -2,8 +2,10 @@
 
 import { Suspense, useEffect, useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Eye, EyeOff, LockKeyhole, Mail } from "lucide-react";
 import { ApiError, authApi } from "@/lib/api";
 import { Ps2Logo } from "@/components/v2/Ps2Logo";
+import { Ps2Brand } from "@/components/v2/Ps2Brand";
 import { useIsMobile } from "@/components/v2/useIsMobile";
 
 type AuthView = "login" | "signup" | "forgot" | "forgot-sent";
@@ -64,6 +66,8 @@ function LoginV2Screen() {
   const [forgotEmail, setForgotEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
 
   useEffect(() => {
     authApi
@@ -162,12 +166,7 @@ function LoginV2Screen() {
 
       <div className="ps2-auth-form-panel">
         <div className="ps2-auth-form-inner">
-          <div className="ps2-auth-logo-row">
-            <div className="ps2-auth-logo-mark">
-              <Ps2Logo size={38} gradientId="ps2LogoAuthForm" />
-            </div>
-            <span>PhotoSphere</span>
-          </div>
+          <Ps2Brand variant="login" gradientId="ps2LogoAuthForm" />
 
           {error && <div className="ps2-auth-error">{error}</div>}
 
@@ -178,30 +177,51 @@ function LoginV2Screen() {
               <form className="ps2-auth-form" onSubmit={handleLogin}>
                 <div className="ps2-auth-field">
                   <label htmlFor="ps2-login-email">Email</label>
-                  <input
-                    id="ps2-login-email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    autoComplete="email"
-                  />
+                  <div className="ps2-auth-input-wrap">
+                    <Mail className="ps2-auth-input-icon" size={19} strokeWidth={1.8} />
+                    <input
+                      id="ps2-login-email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="Email address"
+                      required
+                      autoComplete="email"
+                    />
+                  </div>
                 </div>
                 <div className="ps2-auth-field">
                   <label htmlFor="ps2-login-password">Password</label>
-                  <input
-                    id="ps2-login-password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    autoComplete="current-password"
-                  />
+                  <div className="ps2-auth-input-wrap">
+                    <LockKeyhole className="ps2-auth-input-icon" size={19} strokeWidth={1.8} />
+                    <input
+                      id="ps2-login-password"
+                      type={showLoginPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Password"
+                      required
+                      autoComplete="current-password"
+                    />
+                    <button
+                      type="button"
+                      className="ps2-auth-input-eye"
+                      onClick={() => setShowLoginPassword((v) => !v)}
+                      aria-label={showLoginPassword ? "Hide password" : "Show password"}
+                    >
+                      {showLoginPassword ? <EyeOff size={19} strokeWidth={1.8} /> : <Eye size={19} strokeWidth={1.8} />}
+                    </button>
+                  </div>
                 </div>
                 <button type="submit" className="ps2-auth-submit" disabled={submitting}>
                   {submitting ? "Signing in…" : "Continue"}
                 </button>
               </form>
+              <div className="ps2-auth-divider">
+                <span />
+                <div className="ps2-auth-divider-star">✦</div>
+                <span />
+              </div>
               <div className="ps2-auth-links">
                 <a
                   href="#"
@@ -245,28 +265,42 @@ function LoginV2Screen() {
                 </div>
                 <div className="ps2-auth-field">
                   <label htmlFor="ps2-signup-email">Email</label>
-                  <input
-                    id="ps2-signup-email"
-                    type="email"
-                    value={signupEmail}
-                    onChange={(e) => setSignupEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    required
-                    autoComplete="email"
-                  />
+                  <div className="ps2-auth-input-wrap">
+                    <Mail className="ps2-auth-input-icon" size={19} strokeWidth={1.8} />
+                    <input
+                      id="ps2-signup-email"
+                      type="email"
+                      value={signupEmail}
+                      onChange={(e) => setSignupEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      required
+                      autoComplete="email"
+                    />
+                  </div>
                 </div>
                 <div className="ps2-auth-field">
                   <label htmlFor="ps2-signup-password">Password</label>
-                  <input
-                    id="ps2-signup-password"
-                    type="password"
-                    value={signupPassword}
-                    onChange={(e) => setSignupPassword(e.target.value)}
-                    placeholder="Make it a good one"
-                    required
-                    minLength={8}
-                    autoComplete="new-password"
-                  />
+                  <div className="ps2-auth-input-wrap">
+                    <LockKeyhole className="ps2-auth-input-icon" size={19} strokeWidth={1.8} />
+                    <input
+                      id="ps2-signup-password"
+                      type={showSignupPassword ? "text" : "password"}
+                      value={signupPassword}
+                      onChange={(e) => setSignupPassword(e.target.value)}
+                      placeholder="Make it a good one"
+                      required
+                      minLength={8}
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      className="ps2-auth-input-eye"
+                      onClick={() => setShowSignupPassword((v) => !v)}
+                      aria-label={showSignupPassword ? "Hide password" : "Show password"}
+                    >
+                      {showSignupPassword ? <EyeOff size={19} strokeWidth={1.8} /> : <Eye size={19} strokeWidth={1.8} />}
+                    </button>
+                  </div>
                   <div className="ps2-auth-strength">
                     {[0, 1, 2, 3].map((i) => (
                       <div
@@ -305,15 +339,18 @@ function LoginV2Screen() {
               <form className="ps2-auth-form" onSubmit={handleForgotSubmit}>
                 <div className="ps2-auth-field">
                   <label htmlFor="ps2-forgot-email">Email</label>
-                  <input
-                    id="ps2-forgot-email"
-                    type="email"
-                    value={forgotEmail}
-                    onChange={(e) => setForgotEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    required
-                    autoComplete="email"
-                  />
+                  <div className="ps2-auth-input-wrap">
+                    <Mail className="ps2-auth-input-icon" size={19} strokeWidth={1.8} />
+                    <input
+                      id="ps2-forgot-email"
+                      type="email"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      required
+                      autoComplete="email"
+                    />
+                  </div>
                 </div>
                 <button type="submit" className="ps2-auth-submit" style={{ marginTop: 6 }}>
                   Send reset link
